@@ -1,14 +1,16 @@
 // app/api/process-order/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { 
-  parseOrderRequest, 
-  generateClarifyingQuestions, 
+import {
+  parseOrderRequest,
+  generateClarifyingQuestions,
   buildLineItem,
-  generateResponseMessage 
+  detectUserIntent,
+  answerDirectQuestion,
+  extractInfoFromResponse
 } from '@/lib/ai-assistant';
 import { getProduct, getConfigurationAndPricing, getAvailableCharges } from '@/lib/promostandards';
-import { ConversationState, GenerateLineItemResponse } from '@/types';
+import { ConversationState, GenerateLineItemResponse, ParsedOrderRequest } from '@/types';
 
 export async function POST(request: NextRequest): Promise<NextResponse<GenerateLineItemResponse>> {
   try {
@@ -18,7 +20,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       currentState?: ConversationState;
     };
 
-    // Initialize or update state
+    // Initialize state - preserve everything from previous state
     let state: ConversationState = currentState || {
       step: 'initial',
       parsedRequest: { rawQuery: '', confidence: 'low', missingFields: [] },
@@ -26,96 +28,102 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       questions: [],
     };
 
-    // Step 1: Parse the user input
-    if (state.step === 'initial' || !state.product) {
-      const parsed = await parseOrderRequest(userInput);
-      state.parsedRequest = parsed;
+    // Detect what the user is trying to do
+    const intent = await detectUserIntent(userInput, state);
 
-      // If we don't have a product ID, we need to ask
-      if (!parsed.productId) {
-        state.step = 'clarifying_product';
-        state.questions = [{
-          field: 'productId',
-          question: "I need a product ID or SKU to look up the item. What's the product number? (e.g., '5790' for HIT drinkware)",
-          type: 'text',
-          options: undefined,
-        }];
-        
-        const message = await generateResponseMessage(state);
-        return NextResponse.json({ success: true, state, message });
-      }
-
-      // Fetch product data
-      const product = await getProduct(parsed.productId);
-      if (!product) {
-        state.questions = [{
-          field: 'productId',
-          question: `I couldn't find product "${parsed.productId}". Please check the product ID and try again.`,
-          type: 'text',
-          options: undefined,
-        }];
-        const message = await generateResponseMessage(state);
-        return NextResponse.json({ success: true, state, message });
-      }
-
-      state.product = product;
-      state.step = 'product_found';
-
-      // Fetch pricing
-      const pricing = await getConfigurationAndPricing(product.productId);
-      if (pricing) {
-        // Also fetch charges
-        const charges = await getAvailableCharges(product.productId);
-        pricing.charges = charges;
-        state.pricing = pricing;
-      }
+    // Handle direct questions (e.g., "what decoration methods are available?")
+    if (intent.type === 'question') {
+      const answer = await answerDirectQuestion(userInput, state);
+      return NextResponse.json({
+        success: true,
+        state,
+        message: answer
+      });
     }
 
-    // Step 2: Handle answers to clarifying questions
-    if (currentState && userInput) {
-      // User is answering a question
-      const lastQuestion = state.questions[0];
-      if (lastQuestion) {
-        state.selectedOptions[lastQuestion.field] = userInput;
-        
-        // Update parsed request if it's a core field
-        if (lastQuestion.field === 'quantity') {
-          state.parsedRequest.quantity = parseInt(userInput);
-        } else if (lastQuestion.field === 'color') {
-          state.parsedRequest.color = userInput;
-        } else if (lastQuestion.field === 'productId') {
-          state.parsedRequest.productId = userInput;
-          // Fetch the product
-          const product = await getProduct(userInput);
-          if (product) {
-            state.product = product;
-            const pricing = await getConfigurationAndPricing(product.productId);
-            if (pricing) {
-              const charges = await getAvailableCharges(product.productId);
-              pricing.charges = charges;
-              state.pricing = pricing;
-            }
-          }
+    // Extract any new information from user's response
+    const extractedInfo = await extractInfoFromResponse(userInput, state);
+
+    // Merge extracted info into parsedRequest (never overwrite with null/undefined)
+    state.parsedRequest = mergeInfo(state.parsedRequest, extractedInfo);
+
+    // Also update selectedOptions for any newly extracted fields
+    Object.entries(extractedInfo).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && key !== 'rawQuery' && key !== 'confidence' && key !== 'missingFields') {
+        state.selectedOptions[key] = value;
+      }
+    });
+
+    // If we don't have a product yet, try to get one
+    if (!state.product && state.parsedRequest.productId) {
+      const product = await getProduct(state.parsedRequest.productId);
+      if (product) {
+        state.product = product;
+        state.step = 'product_found';
+
+        // Fetch pricing
+        const pricing = await getConfigurationAndPricing(product.productId);
+        if (pricing) {
+          const charges = await getAvailableCharges(product.productId);
+          pricing.charges = charges;
+          state.pricing = pricing;
         }
+      } else {
+        // Product not found
+        state.questions = [{
+          field: 'productId',
+          question: `I couldn't find product "${state.parsedRequest.productId}" in the HIT catalog. Please check the product ID and try again.`,
+          type: 'text',
+          options: undefined,
+        }];
+        return NextResponse.json({
+          success: true,
+          state,
+          message: state.questions[0].question
+        });
       }
     }
 
-    // Step 3: Generate clarifying questions if needed
+    // If we still don't have a product ID at all, ask for it
+    if (!state.parsedRequest.productId) {
+      state.step = 'clarifying_product';
+      state.questions = [{
+        field: 'productId',
+        question: "What's the product ID or SKU? (e.g., '550075' or '16103')",
+        type: 'text',
+        options: undefined,
+      }];
+      return NextResponse.json({
+        success: true,
+        state,
+        message: "I'd be happy to help with your order! " + state.questions[0].question
+      });
+    }
+
+    // We have product and pricing - check what's still missing
     if (state.product && state.pricing) {
+      // Calculate what we still need
       const questions = await generateClarifyingQuestions(
         state.parsedRequest,
         state.product,
-        state.pricing
+        state.pricing,
+        state.selectedOptions
       );
 
       if (questions.length > 0) {
         state.step = 'clarifying_options';
         state.questions = questions;
-        const message = await generateResponseMessage(state);
+
+        // Build a natural response acknowledging what we know
+        const acknowledgment = buildAcknowledgment(state.parsedRequest, state.selectedOptions);
+        const message = acknowledgment
+          ? `${acknowledgment}\n\n${questions[0].question}`
+          : questions[0].question;
+
         return NextResponse.json({ success: true, state, message });
       }
 
-      // Step 4: We have enough info - build the line item
+      // We have everything - build the line item
       state.step = 'calculating_price';
       const lineItem = await buildLineItem(
         state.parsedRequest,
@@ -128,7 +136,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       state.step = 'complete';
       state.questions = [];
 
-      const message = `Got it! Here's your line item for ${lineItem.quantity}x ${lineItem.productName} in ${lineItem.color}:
+      const message = `Here's your line item for ${lineItem.quantity}x ${lineItem.productName} in ${lineItem.color}:
 
 **Product:** ${lineItem.productId} - ${lineItem.partId}
 **Unit Price:** $${lineItem.unitPrice.toFixed(2)}
@@ -140,9 +148,12 @@ ${lineItem.fobPoint ? `\n*Ships from: ${lineItem.fobPoint}*` : ''}`;
       return NextResponse.json({ success: true, state, message });
     }
 
-    // Fallback
-    const message = await generateResponseMessage(state);
-    return NextResponse.json({ success: true, state, message });
+    // Fallback - shouldn't normally reach here
+    return NextResponse.json({
+      success: true,
+      state,
+      message: "I'm having trouble processing that. Could you provide the product ID you're looking for?"
+    });
 
   } catch (error) {
     console.error('Process order error:', error);
@@ -158,4 +169,35 @@ ${lineItem.fobPoint ? `\n*Ships from: ${lineItem.fobPoint}*` : ''}`;
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+}
+
+// Merge new info into existing, never overwriting with null/undefined
+function mergeInfo(existing: ParsedOrderRequest, newInfo: Partial<ParsedOrderRequest>): ParsedOrderRequest {
+  const merged = { ...existing };
+
+  Object.entries(newInfo).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      (merged as Record<string, unknown>)[key] = value;
+    }
+  });
+
+  return merged;
+}
+
+// Build acknowledgment of what we know
+function buildAcknowledgment(parsed: ParsedOrderRequest, selected: Record<string, string | number>): string {
+  const known: string[] = [];
+
+  if (parsed.quantity || selected.quantity) {
+    known.push(`${parsed.quantity || selected.quantity} units`);
+  }
+  if (parsed.color || selected.color) {
+    known.push(`color: ${parsed.color || selected.color}`);
+  }
+  if (parsed.decorationMethod || selected.decorationMethod) {
+    known.push(`decoration: ${parsed.decorationMethod || selected.decorationMethod}`);
+  }
+
+  if (known.length === 0) return '';
+  return `Got it - ${known.join(', ')}.`;
 }

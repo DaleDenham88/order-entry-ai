@@ -6,7 +6,12 @@
       "Bash(gh auth status:*)",
       "Bash(where:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git remote add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
     ]
   }
 }

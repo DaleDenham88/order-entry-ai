@@ -14,10 +14,7 @@ const CREDENTIALS = {
   password: 'e8e1d66dfeefdf2f0f89f013dde032b9',
 };
 
-// Use local API route for SOAP proxy (works on Vercel)
-// In production, this resolves to the same domain
-const SOAP_PROXY_URL = process.env.SOAP_PROXY_URL || '/api/proxy-soap';
-
+// Direct SOAP call (no proxy needed for server-side)
 interface SoapCallParams {
   endpoint: string;
   soapAction: string;
@@ -25,19 +22,31 @@ interface SoapCallParams {
 }
 
 async function callSoapProxy(params: SoapCallParams): Promise<string> {
-  const response = await fetch(SOAP_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  
-  const result = await response.json();
-  
-  if (result.error) {
-    throw new Error(result.error);
+  const { endpoint, soapAction, xmlBody } = params;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset=utf-8',
+        'SOAPAction': `"${soapAction}"`,
+      },
+      body: xmlBody,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    return await response.text();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('SOAP request timed out');
+    }
+    throw error;
   }
-  
-  return result.responseText;
 }
 
 // ============ PRODUCT DATA SERVICE ============

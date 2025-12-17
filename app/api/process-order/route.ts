@@ -48,9 +48,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
     state.parsedRequest = mergeInfo(state.parsedRequest, extractedInfo);
 
     // Also update selectedOptions for any newly extracted fields
-    Object.entries(extractedInfo).forEach(([key, value]) => {
-      if (value !== null && value !== undefined && key !== 'rawQuery' && key !== 'confidence' && key !== 'missingFields') {
-        state.selectedOptions[key] = value;
+    const validKeys = ['productId', 'quantity', 'color', 'size', 'decorationMethod', 'decorationColors', 'decorationLocation'];
+    validKeys.forEach(key => {
+      const value = extractedInfo[key as keyof typeof extractedInfo];
+      if (value !== null && value !== undefined) {
+        state.selectedOptions[key] = value as string | number;
       }
     });
 

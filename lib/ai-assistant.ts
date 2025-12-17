@@ -1,9 +1,9 @@
 // lib/ai-assistant.ts
 
 import Anthropic from '@anthropic-ai/sdk';
-import {
-  ParsedOrderRequest,
-  ConversationState,
+import { 
+  ParsedOrderRequest, 
+  ConversationState, 
   ClarifyingQuestion,
   OrderLineItem,
   Product,
@@ -12,185 +12,6 @@ import {
 } from '@/types';
 
 const anthropic = new Anthropic();
-
-// ============ DETECT USER INTENT ============
-
-export async function detectUserIntent(
-  userInput: string,
-  state: ConversationState
-): Promise<{ type: 'question' | 'answer' | 'order'; topic?: string }> {
-  // Quick pattern matching for common question patterns
-  const questionPatterns = [
-    /what\s+(decoration\s+)?methods/i,
-    /what\s+(are\s+)?(the\s+)?options/i,
-    /what\s+colors/i,
-    /what\s+sizes/i,
-    /how\s+(much|many)/i,
-    /can\s+(you|i)/i,
-    /is\s+there/i,
-    /do\s+you\s+have/i,
-    /tell\s+me\s+about/i,
-    /list\s+(the|all)/i,
-  ];
-
-  for (const pattern of questionPatterns) {
-    if (pattern.test(userInput)) {
-      return { type: 'question' };
-    }
-  }
-
-  // If it's a short response and we have pending questions, it's likely an answer
-  if (state.questions.length > 0 && userInput.split(' ').length <= 10) {
-    return { type: 'answer' };
-  }
-
-  // Default to order intent
-  return { type: 'order' };
-}
-
-// ============ ANSWER DIRECT QUESTIONS ============
-
-export async function answerDirectQuestion(
-  userInput: string,
-  state: ConversationState
-): Promise<string> {
-  // Get available options from state
-  const availableMethods = state.pricing?.decorationLocations
-    .flatMap(l => l.decorationMethods.map(m => m.decorationName)) || [];
-  const uniqueMethods = [...new Set(availableMethods)];
-
-  const availableColors = state.product?.parts
-    .flatMap(p => p.colors) || [];
-  const uniqueColors = [...new Set(availableColors)];
-
-  const availableLocations = state.pricing?.decorationLocations
-    .map(l => l.locationName) || [];
-
-  // Build context for the AI
-  const context = `
-Product: ${state.product?.productName || 'Not yet selected'}
-Available decoration methods: ${uniqueMethods.length > 0 ? uniqueMethods.join(', ') : 'None listed'}
-Available colors: ${uniqueColors.slice(0, 20).join(', ')}${uniqueColors.length > 20 ? ` (+${uniqueColors.length - 20} more)` : ''}
-Available decoration locations: ${availableLocations.join(', ') || 'None listed'}
-`;
-
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 512,
-    messages: [
-      {
-        role: 'user',
-        content: `You are a helpful order entry assistant. The user asked a direct question. Answer it concisely using the available information, then ask if they'd like to proceed with their order.
-
-User question: "${userInput}"
-
-Available information:
-${context}
-
-Rules:
-- Answer the question directly and specifically
-- List actual options when asked about methods, colors, etc.
-- Keep response under 100 words
-- Don't ask redundant questions
-- If we don't have product info yet, mention that we need a product ID first
-
-Respond naturally:`
-      }
-    ],
-  });
-
-  const content = message.content[0];
-  if (content.type === 'text') {
-    return content.text;
-  }
-  return "I'm not sure how to answer that. Could you rephrase?";
-}
-
-// ============ EXTRACT INFO FROM USER RESPONSE ============
-
-export async function extractInfoFromResponse(
-  userInput: string,
-  state: ConversationState
-): Promise<Partial<ParsedOrderRequest>> {
-  // Get context about what we're asking for
-  const currentQuestion = state.questions[0];
-  const availableColors = state.product?.parts.flatMap(p => p.colors) || [];
-  const availableMethods = state.pricing?.decorationLocations
-    .flatMap(l => l.decorationMethods.map(m => m.decorationName)) || [];
-
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 512,
-    messages: [
-      {
-        role: 'user',
-        content: `Extract order information from the user's response. Be thorough - extract ALL information provided, not just what was asked for.
-
-User response: "${userInput}"
-
-Current question being asked: ${currentQuestion?.question || 'Initial order request'}
-Current question field: ${currentQuestion?.field || 'general'}
-
-Available colors: ${availableColors.slice(0, 30).join(', ')}
-Available decoration methods: ${[...new Set(availableMethods)].join(', ')}
-
-What we already know:
-- Product ID: ${state.parsedRequest.productId || 'unknown'}
-- Quantity: ${state.parsedRequest.quantity || 'unknown'}
-- Color: ${state.parsedRequest.color || 'unknown'}
-- Decoration Method: ${state.parsedRequest.decorationMethod || 'unknown'}
-- Decoration Colors: ${state.parsedRequest.decorationColors || 'unknown'}
-- Decoration Location: ${state.parsedRequest.decorationLocation || 'unknown'}
-
-Extract ANY new information from the user's response. Match colors and methods to available options when possible.
-
-Respond ONLY with valid JSON (no markdown):
-{
-  "productId": "string or null if not mentioned",
-  "quantity": "number or null if not mentioned",
-  "color": "string or null if not mentioned",
-  "decorationMethod": "string or null if not mentioned",
-  "decorationColors": "number or null if not mentioned",
-  "decorationLocation": "string or null if not mentioned"
-}`
-      }
-    ],
-  });
-
-  try {
-    const content = message.content[0];
-    if (content.type === 'text') {
-      const parsed = JSON.parse(content.text.replace(/```json?\n?/g, '').replace(/```/g, '').trim());
-      // Convert string "null" to actual null, and parse numbers
-      const result: Partial<ParsedOrderRequest> = {};
-
-      if (parsed.productId && parsed.productId !== 'null') {
-        result.productId = parsed.productId;
-      }
-      if (parsed.quantity && parsed.quantity !== 'null') {
-        result.quantity = typeof parsed.quantity === 'number' ? parsed.quantity : parseInt(parsed.quantity);
-      }
-      if (parsed.color && parsed.color !== 'null') {
-        result.color = parsed.color;
-      }
-      if (parsed.decorationMethod && parsed.decorationMethod !== 'null') {
-        result.decorationMethod = parsed.decorationMethod;
-      }
-      if (parsed.decorationColors && parsed.decorationColors !== 'null') {
-        result.decorationColors = typeof parsed.decorationColors === 'number' ? parsed.decorationColors : parseInt(parsed.decorationColors);
-      }
-      if (parsed.decorationLocation && parsed.decorationLocation !== 'null') {
-        result.decorationLocation = parsed.decorationLocation;
-      }
-
-      return result;
-    }
-  } catch (e) {
-    console.error('Failed to extract info:', e);
-  }
-
-  return {};
-}
 
 // ============ PARSE INITIAL REQUEST ============
 
@@ -205,12 +26,12 @@ export async function parseOrderRequest(userInput: string): Promise<ParsedOrderR
 
 User request: "${userInput}"
 
-Extract these fields if mentioned (leave null if not specified):
-- productId: The supplier's product ID/SKU (e.g., "5790", "G500", "PC54", "550075")
+Extract these fields if mentioned (leave blank if not specified):
+- productId: The supplier's product ID/SKU (e.g., "5790", "G500", "PC54")
 - quantity: Number of items requested
-- color: Color requested (e.g., "royal blue", "black", "white")
+- color: Color requested
 - size: Size requested (for apparel)
-- decorationMethod: Screen print, embroidery, laser engraving, pad print, etc.
+- decorationMethod: Screen print, embroidery, laser engraving, etc.
 - decorationColors: Number of imprint colors
 - decorationLocation: Where the decoration goes (front, back, left chest, etc.)
 - supplierName: If they mention a specific supplier
@@ -243,12 +64,8 @@ Respond ONLY with valid JSON, no markdown:
       return {
         ...parsed,
         rawQuery: userInput,
-        productId: parsed.productId !== 'null' ? parsed.productId : undefined,
-        quantity: parsed.quantity && parsed.quantity !== 'null' ? parseInt(parsed.quantity) : undefined,
-        color: parsed.color !== 'null' ? parsed.color : undefined,
-        decorationMethod: parsed.decorationMethod !== 'null' ? parsed.decorationMethod : undefined,
-        decorationColors: parsed.decorationColors && parsed.decorationColors !== 'null' ? parseInt(parsed.decorationColors) : undefined,
-        decorationLocation: parsed.decorationLocation !== 'null' ? parsed.decorationLocation : undefined,
+        quantity: parsed.quantity ? parseInt(parsed.quantity) : undefined,
+        decorationColors: parsed.decorationColors ? parseInt(parsed.decorationColors) : undefined,
       };
     }
   } catch (e) {
@@ -267,68 +84,111 @@ Respond ONLY with valid JSON, no markdown:
 export async function generateClarifyingQuestions(
   parsedRequest: ParsedOrderRequest,
   product: Product,
-  pricing: ProductPricing,
-  selectedOptions: Record<string, string | number>
+  pricing: ProductPricing
 ): Promise<ClarifyingQuestion[]> {
-  // Combine parsed request and selected options to see what we have
-  const known = {
-    quantity: parsedRequest.quantity || selectedOptions.quantity,
-    color: parsedRequest.color || selectedOptions.color,
-    decorationMethod: parsedRequest.decorationMethod || selectedOptions.decorationMethod,
-    decorationColors: parsedRequest.decorationColors || selectedOptions.decorationColors,
-    decorationLocation: parsedRequest.decorationLocation || selectedOptions.decorationLocation,
-  };
-
-  // Build available options
+  // Build context about available options
   const availableColors = [...new Set(product.parts.flatMap(p => p.colors))];
+  const availableParts = product.parts.map(p => p.partId);
   const availableLocations = pricing.decorationLocations.map(l => l.locationName);
   const availableMethods = [...new Set(pricing.decorationLocations.flatMap(l => l.decorationMethods.map(m => m.decorationName)))];
+  
+  // Build list of what's still missing - be strict about decoration
+  const missing: string[] = [];
+  if (!parsedRequest.quantity) missing.push('quantity');
+  if (!parsedRequest.color) missing.push('color');
+  if (!parsedRequest.decorationMethod && availableMethods.length > 0) missing.push('decorationMethod');
+  if (!parsedRequest.decorationLocation && availableLocations.length > 0) missing.push('decorationLocation');
+  if (!parsedRequest.decorationColors) missing.push('decorationColors');
+  
+  // If nothing is missing, we're done
+  if (missing.length === 0) {
+    return [];
+  }
+  
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content: `You are an order entry assistant for promotional products. Generate clarifying questions for missing information.
 
-  // Determine what we still need
-  const questions: ClarifyingQuestion[] = [];
+User's original request: "${parsedRequest.rawQuery}"
 
-  // Must have quantity
-  if (!known.quantity) {
-    questions.push({
+What we know:
+- Product ID: ${parsedRequest.productId || 'unknown'}
+- Quantity: ${parsedRequest.quantity || 'MISSING - MUST ASK'}
+- Color: ${parsedRequest.color || 'MISSING - MUST ASK'}
+- Decoration Method: ${parsedRequest.decorationMethod || 'MISSING - MUST ASK'}
+- Decoration Location: ${parsedRequest.decorationLocation || 'MISSING - MUST ASK'}
+- Number of Imprint Colors: ${parsedRequest.decorationColors || 'MISSING - MUST ASK'}
+
+Product: ${product.productName}
+
+Available options:
+- Colors: ${availableColors.slice(0, 15).join(', ')}${availableColors.length > 15 ? ` (+${availableColors.length - 15} more)` : ''}
+- Decoration Locations: ${availableLocations.join(', ') || 'Standard'}
+- Decoration Methods: ${availableMethods.join(', ') || 'Standard imprint'}
+
+IMPORTANT RULES:
+1. Ask about ALL fields marked "MISSING - MUST ASK" that have available options
+2. For decoration method, if multiple are available, you MUST ask
+3. For decoration location, if multiple are available, you MUST ask  
+4. For imprint colors, always ask "How many colors in your imprint?" (1-6 typical)
+5. Ask up to 3 questions at a time, prioritize: quantity > color > decoration method > location > imprint colors
+6. Provide options arrays when choices are limited (under 10 options)
+7. For colors with many options, provide top 6-8 most common and add "Other" option
+
+Return ONLY valid JSON array:
+[
+  {
+    "field": "quantity",
+    "question": "How many do you need?",
+    "options": null,
+    "type": "number"
+  }
+]`
+      }
+    ],
+  });
+
+  try {
+    const content = message.content[0];
+    if (content.type === 'text') {
+      const questions = JSON.parse(content.text.replace(/```json?\n?/g, '').replace(/```/g, '').trim());
+      return questions.slice(0, 3); // Max 3 at a time
+    }
+  } catch (e) {
+    console.error('Failed to parse questions:', e);
+  }
+
+  // Fallback: generate basic questions for missing fields
+  const fallbackQuestions: ClarifyingQuestion[] = [];
+  if (!parsedRequest.quantity) {
+    fallbackQuestions.push({
       field: 'quantity',
-      question: 'How many units do you need?',
+      question: 'How many do you need?',
       type: 'number',
-      options: undefined,
     });
   }
-
-  // Must have color if multiple available
-  if (!known.color && availableColors.length > 1) {
-    questions.push({
+  if (!parsedRequest.color && availableColors.length > 0) {
+    fallbackQuestions.push({
       field: 'color',
-      question: `What color? Available: ${availableColors.slice(0, 8).join(', ')}${availableColors.length > 8 ? '...' : ''}`,
+      question: 'What color?',
+      options: availableColors.slice(0, 8),
       type: 'select',
-      options: availableColors.slice(0, 10),
     });
   }
-
-  // Decoration method if available
-  if (!known.decorationMethod && availableMethods.length > 0) {
-    questions.push({
+  if (!parsedRequest.decorationMethod && availableMethods.length > 0) {
+    fallbackQuestions.push({
       field: 'decorationMethod',
-      question: `What decoration method? Options: ${availableMethods.join(', ')}`,
-      type: 'select',
+      question: 'What decoration method?',
       options: availableMethods,
+      type: 'select',
     });
   }
-
-  // If we have decoration method but no color count
-  if (known.decorationMethod && !known.decorationColors) {
-    questions.push({
-      field: 'decorationColors',
-      question: 'How many colors in your imprint?',
-      type: 'number',
-      options: undefined,
-    });
-  }
-
-  // Return only the first question to keep conversation focused
-  return questions.slice(0, 1);
+  
+  return fallbackQuestions.slice(0, 3);
 }
 
 // ============ BUILD LINE ITEM ============
@@ -340,76 +200,119 @@ export async function buildLineItem(
   selectedOptions: Record<string, string | number>
 ): Promise<OrderLineItem> {
   // Merge parsed request with selected options
-  const quantity = (selectedOptions.quantity as number) || parsedRequest.quantity || 1;
-  const color = (selectedOptions.color as string) || parsedRequest.color || product.parts[0]?.primaryColor || '';
-  const size = (selectedOptions.size as string) || parsedRequest.size;
-
+  const quantity = selectedOptions.quantity as number || parsedRequest.quantity || 1;
+  const color = selectedOptions.color as string || parsedRequest.color || product.parts[0]?.primaryColor || '';
+  const size = selectedOptions.size as string || parsedRequest.size;
+  const decorationMethod = selectedOptions.decorationMethod as string || parsedRequest.decorationMethod || '';
+  const decorationColors = selectedOptions.decorationColors as number || parsedRequest.decorationColors || 1;
+  const decorationLocation = selectedOptions.decorationLocation as string || parsedRequest.decorationLocation || '';
+  
   // Find matching part
-  let selectedPart = product.parts.find(p =>
+  let selectedPart = product.parts.find(p => 
     p.colors.some(c => c.toLowerCase().includes(color.toLowerCase()))
   );
   if (!selectedPart) selectedPart = product.parts[0];
-
-  // Find price for quantity
+  
+  // Find price for quantity from price breaks
   let unitPrice = 0;
   for (const pb of pricing.priceBreaks) {
     if (quantity >= pb.quantity) {
       unitPrice = pb.price;
     }
   }
-
-  // Build charges
+  
+  // Build charges array - this is where the real value is
   const charges: LineItemCharge[] = [];
-
-  // Add decoration charges if applicable
-  const decorationMethod = (selectedOptions.decorationMethod as string) || parsedRequest.decorationMethod;
-  const decorationColors = (selectedOptions.decorationColors as number) || parsedRequest.decorationColors || 1;
-  const decorationLocation = (selectedOptions.decorationLocation as string) || parsedRequest.decorationLocation;
-
-  if (decorationMethod) {
-    // Find setup charge
-    const setupCharge = pricing.charges.find(c =>
-      c.chargeType.toLowerCase().includes('setup') ||
-      c.chargeName.toLowerCase().includes('setup')
-    );
-    if (setupCharge && setupCharge.priceBreaks.length > 0) {
-      charges.push({
-        name: setupCharge.chargeName,
-        description: 'One-time setup fee',
-        quantity: 1,
-        unitPrice: setupCharge.priceBreaks[0].price,
-        extendedPrice: setupCharge.priceBreaks[0].price,
-      });
+  
+  // Process all available charges from the pricing data
+  for (const charge of pricing.charges) {
+    const chargeType = charge.chargeType.toLowerCase();
+    const chargeName = charge.chargeName.toLowerCase();
+    
+    // Determine if this charge applies and calculate it
+    let chargeQty = 0;
+    let chargeUnitPrice = 0;
+    
+    // Setup/origination charges (one-time)
+    if (chargeType.includes('setup') || chargeType.includes('origination') || 
+        chargeName.includes('setup') || chargeName.includes('origination') ||
+        chargeName.includes('screen') || chargeName.includes('plate')) {
+      chargeQty = decorationColors; // One setup per color
+      // Find the price
+      if (charge.priceBreaks.length > 0) {
+        chargeUnitPrice = charge.priceBreaks[0].price;
+      }
     }
-
-    // Find run charge (per piece decoration)
-    const runCharge = pricing.charges.find(c =>
-      c.chargeType.toLowerCase().includes('run') ||
-      c.chargeName.toLowerCase().includes('imprint') ||
-      c.chargeName.toLowerCase().includes('decoration')
-    );
-    if (runCharge) {
-      let runPrice = 0;
-      for (const pb of runCharge.priceBreaks) {
+    // Run charges (per piece)
+    else if (chargeType.includes('run') || chargeName.includes('run') ||
+             chargeName.includes('imprint') || chargeName.includes('print') ||
+             chargeName.includes('decoration') || chargeName.includes('embroidery')) {
+      chargeQty = quantity;
+      // Find price for quantity
+      for (const pb of charge.priceBreaks) {
         if (quantity >= pb.quantity) {
-          runPrice = pb.price;
+          chargeUnitPrice = pb.price;
         }
       }
-      if (runPrice > 0) {
-        charges.push({
-          name: runCharge.chargeName,
-          description: `${decorationColors} color(s) - ${decorationLocation || 'standard location'}`,
-          quantity: quantity,
-          unitPrice: runPrice * decorationColors,
-          extendedPrice: runPrice * decorationColors * quantity,
-        });
+      // Multiply by colors if it's a per-color charge
+      if (chargeName.includes('color') || chargeName.includes('additional')) {
+        chargeUnitPrice = chargeUnitPrice * decorationColors;
       }
     }
+    // Additional color charges
+    else if (chargeName.includes('additional color') || chargeName.includes('extra color')) {
+      if (decorationColors > 1) {
+        chargeQty = decorationColors - 1; // First color often included
+        if (charge.priceBreaks.length > 0) {
+          chargeUnitPrice = charge.priceBreaks[0].price;
+        }
+      }
+    }
+    // PMS match charges
+    else if (chargeName.includes('pms') || chargeName.includes('pantone')) {
+      // Only add if they likely need PMS matching
+      chargeQty = 1;
+      if (charge.priceBreaks.length > 0) {
+        chargeUnitPrice = charge.priceBreaks[0].price;
+      }
+    }
+    
+    // Add the charge if it has value
+    if (chargeQty > 0 && chargeUnitPrice > 0) {
+      charges.push({
+        name: charge.chargeName,
+        description: charge.chargeDescription || `${decorationLocation || 'Standard location'}`,
+        quantity: chargeQty,
+        unitPrice: chargeUnitPrice,
+        extendedPrice: chargeQty * chargeUnitPrice,
+      });
+    }
   }
-
+  
+  // If no charges were found from API but we have decoration, add defaults
+  if (charges.length === 0 && decorationMethod) {
+    // Default setup charge
+    charges.push({
+      name: 'Setup Charge',
+      description: `${decorationMethod} setup - ${decorationColors} color(s)`,
+      quantity: decorationColors,
+      unitPrice: 50.00, // Default setup per color
+      extendedPrice: decorationColors * 50.00,
+    });
+    
+    // Default run charge
+    charges.push({
+      name: 'Decoration Run Charge',
+      description: `${decorationMethod} - ${decorationLocation || 'Standard location'}`,
+      quantity: quantity,
+      unitPrice: 0.50 * decorationColors, // Default per piece per color
+      extendedPrice: quantity * 0.50 * decorationColors,
+    });
+  }
+  
   const extendedPrice = unitPrice * quantity;
   const chargesTotal = charges.reduce((sum, c) => sum + c.extendedPrice, 0);
-
+  
   return {
     productId: product.productId,
     partId: selectedPart?.partId || '',

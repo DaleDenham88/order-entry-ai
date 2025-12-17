@@ -1,16 +1,14 @@
 // app/api/process-order/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  parseOrderRequest,
-  generateClarifyingQuestions,
+import { 
+  parseOrderRequest, 
+  generateClarifyingQuestions, 
   buildLineItem,
-  detectUserIntent,
-  answerDirectQuestion,
-  extractInfoFromResponse
+  generateResponseMessage 
 } from '@/lib/ai-assistant';
-import { getProduct, getConfigurationAndPricing, getAvailableCharges } from '@/lib/promostandards';
-import { ConversationState, GenerateLineItemResponse, ParsedOrderRequest } from '@/types';
+import { getProduct, getConfigurationAndPricing, getAvailableCharges, getAvailableLocations } from '@/lib/promostandards';
+import { ConversationState, GenerateLineItemResponse } from '@/types';
 
 export async function POST(request: NextRequest): Promise<NextResponse<GenerateLineItemResponse>> {
   try {
@@ -20,7 +18,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       currentState?: ConversationState;
     };
 
-    // Initialize state - preserve everything from previous state
+    // Initialize or update state
     let state: ConversationState = currentState || {
       step: 'initial',
       parsedRequest: { rawQuery: '', confidence: 'low', missingFields: [] },
@@ -28,104 +26,130 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       questions: [],
     };
 
-    // Detect what the user is trying to do
-    const intent = await detectUserIntent(userInput, state);
-
-    // Handle direct questions (e.g., "what decoration methods are available?")
-    if (intent.type === 'question') {
-      const answer = await answerDirectQuestion(userInput, state);
-      return NextResponse.json({
-        success: true,
-        state,
-        message: answer
-      });
+    // If we have a current state with questions, this is an answer
+    if (currentState && currentState.questions.length > 0 && userInput) {
+      const lastQuestion = state.questions[0];
+      
+      // Store the answer
+      if (lastQuestion.field === 'quantity') {
+        const qty = parseInt(userInput);
+        if (!isNaN(qty)) {
+          state.selectedOptions.quantity = qty;
+          state.parsedRequest.quantity = qty;
+        }
+      } else if (lastQuestion.field === 'color') {
+        state.selectedOptions.color = userInput;
+        state.parsedRequest.color = userInput;
+      } else if (lastQuestion.field === 'decorationMethod') {
+        state.selectedOptions.decorationMethod = userInput;
+        state.parsedRequest.decorationMethod = userInput;
+      } else if (lastQuestion.field === 'decorationLocation') {
+        state.selectedOptions.decorationLocation = userInput;
+        state.parsedRequest.decorationLocation = userInput;
+      } else if (lastQuestion.field === 'decorationColors') {
+        const colors = parseInt(userInput);
+        if (!isNaN(colors)) {
+          state.selectedOptions.decorationColors = colors;
+          state.parsedRequest.decorationColors = colors;
+        }
+      } else if (lastQuestion.field === 'productId') {
+        state.parsedRequest.productId = userInput;
+      } else {
+        // Generic field
+        state.selectedOptions[lastQuestion.field] = userInput;
+      }
+      
+      // Clear the answered question
+      state.questions = state.questions.slice(1);
     }
 
-    // Extract any new information from user's response
-    const extractedInfo = await extractInfoFromResponse(userInput, state);
-
-    // Merge extracted info into parsedRequest (never overwrite with null/undefined)
-    state.parsedRequest = mergeInfo(state.parsedRequest, extractedInfo);
-
-    // Also update selectedOptions for any newly extracted fields
-    const validKeys = ['productId', 'quantity', 'color', 'size', 'decorationMethod', 'decorationColors', 'decorationLocation'];
-    validKeys.forEach(key => {
-      const value = extractedInfo[key as keyof typeof extractedInfo];
-      if (value !== null && value !== undefined) {
-        state.selectedOptions[key] = value as string | number;
+    // Step 1: Parse the user input if this is initial or we need product
+    if (state.step === 'initial' || !state.product) {
+      // Only parse if we don't already have parsed data
+      if (!state.parsedRequest.productId) {
+        const parsed = await parseOrderRequest(userInput);
+        state.parsedRequest = { ...state.parsedRequest, ...parsed };
       }
-    });
 
-    // If we don't have a product yet, try to get one
-    if (!state.product && state.parsedRequest.productId) {
-      const product = await getProduct(state.parsedRequest.productId);
-      if (product) {
-        state.product = product;
-        state.step = 'product_found';
-
-        // Fetch pricing
-        const pricing = await getConfigurationAndPricing(product.productId);
-        if (pricing) {
-          const charges = await getAvailableCharges(product.productId);
-          pricing.charges = charges;
-          state.pricing = pricing;
-        }
-      } else {
-        // Product not found
+      // If we don't have a product ID, we need to ask
+      if (!state.parsedRequest.productId) {
+        state.step = 'clarifying_product';
         state.questions = [{
           field: 'productId',
-          question: `I couldn't find product "${state.parsedRequest.productId}" in the HIT catalog. Please check the product ID and try again.`,
+          question: "I need a product ID to look up. What's the product number? (e.g., '5790' for HIT drinkware)",
           type: 'text',
           options: undefined,
         }];
-        return NextResponse.json({
-          success: true,
-          state,
-          message: state.questions[0].question
+        
+        return NextResponse.json({ 
+          success: true, 
+          state, 
+          message: "I'd be happy to help build your order! What's the product ID or SKU you're looking for?" 
         });
+      }
+
+      // Fetch product data
+      const product = await getProduct(state.parsedRequest.productId);
+      if (!product) {
+        state.questions = [{
+          field: 'productId',
+          question: `Couldn't find product "${state.parsedRequest.productId}". Please check the ID and try again.`,
+          type: 'text',
+          options: undefined,
+        }];
+        return NextResponse.json({ 
+          success: true, 
+          state, 
+          message: `I couldn't find product "${state.parsedRequest.productId}" in HIT's catalog. Double-check the product ID?`
+        });
+      }
+
+      state.product = product;
+      state.step = 'product_found';
+
+      // Fetch pricing and configuration
+      const pricing = await getConfigurationAndPricing(product.productId);
+      if (pricing) {
+        // Fetch additional data
+        const [charges, locations] = await Promise.all([
+          getAvailableCharges(product.productId),
+          getAvailableLocations(product.productId),
+        ]);
+        
+        pricing.charges = charges;
+        if (locations.length > 0) {
+          pricing.decorationLocations = locations;
+        }
+        state.pricing = pricing;
       }
     }
 
-    // If we still don't have a product ID at all, ask for it
-    if (!state.parsedRequest.productId) {
-      state.step = 'clarifying_product';
-      state.questions = [{
-        field: 'productId',
-        question: "What's the product ID or SKU? (e.g., '550075' or '16103')",
-        type: 'text',
-        options: undefined,
-      }];
-      return NextResponse.json({
-        success: true,
-        state,
-        message: "I'd be happy to help with your order! " + state.questions[0].question
-      });
-    }
-
-    // We have product and pricing - check what's still missing
+    // Step 2: Generate clarifying questions if we have product but missing info
     if (state.product && state.pricing) {
-      // Calculate what we still need
       const questions = await generateClarifyingQuestions(
         state.parsedRequest,
         state.product,
-        state.pricing,
-        state.selectedOptions
+        state.pricing
       );
 
       if (questions.length > 0) {
         state.step = 'clarifying_options';
         state.questions = questions;
-
-        // Build a natural response acknowledging what we know
-        const acknowledgment = buildAcknowledgment(state.parsedRequest, state.selectedOptions);
-        const message = acknowledgment
-          ? `${acknowledgment}\n\n${questions[0].question}`
-          : questions[0].question;
-
-        return NextResponse.json({ success: true, state, message });
+        
+        // Build a friendly message
+        const productInfo = `Found **${state.product.productName}** (${state.product.productId})`;
+        const questionText = questions.map(q => q.question).join('\n\n');
+        
+        return NextResponse.json({ 
+          success: true, 
+          state, 
+          message: state.step === 'product_found' 
+            ? `${productInfo}\n\nI need a few details to complete your line item:\n\n${questionText}`
+            : questionText
+        });
       }
 
-      // We have everything - build the line item
+      // Step 3: We have enough info - build the line item
       state.step = 'calculating_price';
       const lineItem = await buildLineItem(
         state.parsedRequest,
@@ -138,23 +162,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       state.step = 'complete';
       state.questions = [];
 
-      const message = `Here's your line item for ${lineItem.quantity}x ${lineItem.productName} in ${lineItem.color}:
-
-**Product:** ${lineItem.productId} - ${lineItem.partId}
-**Unit Price:** $${lineItem.unitPrice.toFixed(2)}
-**Extended:** $${lineItem.extendedPrice.toFixed(2)}
-${lineItem.charges.length > 0 ? `\n**Decoration Charges:**\n${lineItem.charges.map(c => `- ${c.name}: $${c.extendedPrice.toFixed(2)}`).join('\n')}` : ''}
-**Total:** $${lineItem.totalWithCharges.toFixed(2)}
-${lineItem.fobPoint ? `\n*Ships from: ${lineItem.fobPoint}*` : ''}`;
-
-      return NextResponse.json({ success: true, state, message });
+      return NextResponse.json({ 
+        success: true, 
+        state, 
+        message: `Here's your complete line item for **${state.product.productName}**:`
+      });
     }
 
-    // Fallback - shouldn't normally reach here
-    return NextResponse.json({
-      success: true,
-      state,
-      message: "I'm having trouble processing that. Could you provide the product ID you're looking for?"
+    // Fallback
+    return NextResponse.json({ 
+      success: true, 
+      state, 
+      message: 'Something went wrong. Please try starting over with a product ID.'
     });
 
   } catch (error) {
@@ -167,39 +186,8 @@ ${lineItem.fobPoint ? `\n*Ships from: ${lineItem.fobPoint}*` : ''}`;
         selectedOptions: {},
         questions: [],
       },
-      message: 'An error occurred processing your request.',
+      message: 'An error occurred. Please try again.',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
-}
-
-// Merge new info into existing, never overwriting with null/undefined
-function mergeInfo(existing: ParsedOrderRequest, newInfo: Partial<ParsedOrderRequest>): ParsedOrderRequest {
-  const merged = { ...existing };
-
-  Object.entries(newInfo).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') {
-      (merged as Record<string, unknown>)[key] = value;
-    }
-  });
-
-  return merged;
-}
-
-// Build acknowledgment of what we know
-function buildAcknowledgment(parsed: ParsedOrderRequest, selected: Record<string, string | number>): string {
-  const known: string[] = [];
-
-  if (parsed.quantity || selected.quantity) {
-    known.push(`${parsed.quantity || selected.quantity} units`);
-  }
-  if (parsed.color || selected.color) {
-    known.push(`color: ${parsed.color || selected.color}`);
-  }
-  if (parsed.decorationMethod || selected.decorationMethod) {
-    known.push(`decoration: ${parsed.decorationMethod || selected.decorationMethod}`);
-  }
-
-  if (known.length === 0) return '';
-  return `Got it - ${known.join(', ')}.`;
 }

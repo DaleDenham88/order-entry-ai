@@ -371,169 +371,179 @@ export default function OrderEntryAssistant() {
 
 function LineItemCard({ lineItem }: { lineItem: OrderLineItem }) {
   return (
-    <div className="line-item-card">
-      <div className="line-item-header">
-        <span className="product-id">{lineItem.productId}</span>
-        <span className="part-id">{lineItem.partId}</span>
+    <div className="line-item-po">
+      <div className="po-header">
+        <h3>Line Item Summary</h3>
+        <span className="po-product">{lineItem.productId} - {lineItem.productName}</span>
       </div>
-      <h3>{lineItem.productName}</h3>
-      <p className="description">{lineItem.description}</p>
       
-      <div className="line-item-details">
-        <div className="detail-row">
-          <span>Color:</span>
-          <span>{lineItem.color}</span>
-        </div>
-        {lineItem.size && (
-          <div className="detail-row">
-            <span>Size:</span>
-            <span>{lineItem.size}</span>
-          </div>
-        )}
-        <div className="detail-row">
-          <span>Quantity:</span>
-          <span>{lineItem.quantity}</span>
-        </div>
-        <div className="detail-row">
-          <span>Unit Price:</span>
-          <span>${lineItem.unitPrice.toFixed(2)}</span>
-        </div>
-        <div className="detail-row highlight">
-          <span>Extended:</span>
-          <span>${lineItem.extendedPrice.toFixed(2)}</span>
-        </div>
-      </div>
-
-      {lineItem.charges.length > 0 && (
-        <div className="charges-section">
-          <h4>Decoration Charges</h4>
+      <table className="po-table">
+        <thead>
+          <tr>
+            <th>Qty</th>
+            <th>Item</th>
+            <th>Description</th>
+            <th className="right">Price</th>
+            <th className="right">Ext Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {/* Main product line */}
+          <tr className="product-row">
+            <td>{lineItem.quantity}</td>
+            <td>{lineItem.partId}</td>
+            <td>
+              {lineItem.color}
+              {lineItem.size && ` / ${lineItem.size}`}
+            </td>
+            <td className="right">${lineItem.unitPrice.toFixed(2)}</td>
+            <td className="right">${lineItem.extendedPrice.toFixed(2)}</td>
+          </tr>
+          
+          {/* Decoration charges */}
           {lineItem.charges.map((charge, idx) => (
-            <div key={idx} className="charge-row">
-              <span>{charge.name}</span>
-              <span>${charge.extendedPrice.toFixed(2)}</span>
-            </div>
+            <tr key={idx} className="charge-row">
+              <td>{charge.quantity}</td>
+              <td>CHARGE</td>
+              <td>{charge.name}{charge.description && ` - ${charge.description}`}</td>
+              <td className="right">${charge.unitPrice.toFixed(2)}</td>
+              <td className="right">${charge.extendedPrice.toFixed(2)}</td>
+            </tr>
           ))}
+        </tbody>
+        <tfoot>
+          <tr className="subtotal-row">
+            <td colSpan={3}></td>
+            <td className="right">Product Subtotal:</td>
+            <td className="right">${lineItem.extendedPrice.toFixed(2)}</td>
+          </tr>
+          {lineItem.charges.length > 0 && (
+            <tr className="subtotal-row">
+              <td colSpan={3}></td>
+              <td className="right">Charges Subtotal:</td>
+              <td className="right">${lineItem.charges.reduce((sum, c) => sum + c.extendedPrice, 0).toFixed(2)}</td>
+            </tr>
+          )}
+          <tr className="total-row">
+            <td colSpan={3}></td>
+            <td className="right"><strong>Line Total:</strong></td>
+            <td className="right"><strong>${lineItem.totalWithCharges.toFixed(2)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+      
+      {lineItem.decorationMethod && (
+        <div className="decoration-summary">
+          <strong>Decoration:</strong> {lineItem.decorationMethod}
+          {lineItem.decorationLocation && ` at ${lineItem.decorationLocation}`}
+          {lineItem.decorationColors && ` (${lineItem.decorationColors} color${lineItem.decorationColors > 1 ? 's' : ''})`}
         </div>
       )}
-
-      <div className="total-row">
-        <span>Total</span>
-        <span>${lineItem.totalWithCharges.toFixed(2)}</span>
-      </div>
-
+      
       {lineItem.fobPoint && (
-        <p className="fob-info">Ships from: {lineItem.fobPoint}</p>
+        <div className="fob-info">Ships from: {lineItem.fobPoint}</div>
       )}
 
       <style jsx>{`
-        .line-item-card {
-          background: rgba(0, 0, 0, 0.2);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 12px;
+        .line-item-po {
+          background: rgba(255, 255, 255, 0.95);
+          border-radius: 8px;
           padding: 1.25rem;
           margin-top: 1rem;
+          color: #1a1a1a;
         }
 
-        .line-item-header {
-          display: flex;
-          gap: 0.5rem;
-          margin-bottom: 0.5rem;
+        .po-header {
+          border-bottom: 2px solid #2563eb;
+          padding-bottom: 0.75rem;
+          margin-bottom: 1rem;
         }
 
-        .product-id, .part-id {
-          background: rgba(59, 130, 246, 0.2);
-          color: #60a5fa;
-          padding: 0.25rem 0.5rem;
-          border-radius: 4px;
-          font-size: 0.75rem;
-          font-family: monospace;
-        }
-
-        h3 {
-          color: white;
-          font-size: 1.1rem;
+        .po-header h3 {
+          color: #1a1a1a;
+          font-size: 0.875rem;
           font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
           margin: 0 0 0.25rem;
         }
 
-        .description {
-          color: rgba(255, 255, 255, 0.6);
-          font-size: 0.875rem;
-          margin: 0 0 1rem;
-        }
-
-        .line-item-details {
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
-          padding-top: 0.75rem;
-        }
-
-        .detail-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 0.35rem 0;
-          font-size: 0.875rem;
-        }
-
-        .detail-row span:first-child {
-          color: rgba(255, 255, 255, 0.6);
-        }
-
-        .detail-row span:last-child {
-          color: white;
-          font-weight: 500;
-        }
-
-        .detail-row.highlight {
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
-          margin-top: 0.5rem;
-          padding-top: 0.75rem;
-        }
-
-        .charges-section {
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
-          margin-top: 0.75rem;
-          padding-top: 0.75rem;
-        }
-
-        .charges-section h4 {
-          color: rgba(255, 255, 255, 0.6);
-          font-size: 0.75rem;
-          font-weight: 500;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin: 0 0 0.5rem;
-        }
-
-        .charge-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 0.25rem 0;
-          font-size: 0.875rem;
-          color: rgba(255, 255, 255, 0.8);
-        }
-
-        .total-row {
-          display: flex;
-          justify-content: space-between;
-          border-top: 2px solid rgba(59, 130, 246, 0.4);
-          margin-top: 0.75rem;
-          padding-top: 0.75rem;
-          font-size: 1.1rem;
+        .po-product {
+          color: #2563eb;
+          font-size: 1rem;
           font-weight: 600;
         }
 
-        .total-row span:first-child {
-          color: rgba(255, 255, 255, 0.8);
+        .po-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.875rem;
         }
 
-        .total-row span:last-child {
-          color: #60a5fa;
+        .po-table th {
+          background: #f1f5f9;
+          padding: 0.625rem 0.75rem;
+          text-align: left;
+          font-weight: 600;
+          color: #475569;
+          border-bottom: 1px solid #e2e8f0;
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+        }
+
+        .po-table th.right,
+        .po-table td.right {
+          text-align: right;
+        }
+
+        .po-table td {
+          padding: 0.625rem 0.75rem;
+          border-bottom: 1px solid #e2e8f0;
+          color: #334155;
+        }
+
+        .product-row {
+          background: #fefce8;
+        }
+
+        .product-row td {
+          font-weight: 500;
+          color: #1a1a1a;
+        }
+
+        .charge-row td {
+          color: #64748b;
+          font-size: 0.8125rem;
+        }
+
+        .subtotal-row td {
+          border-bottom: none;
+          padding: 0.375rem 0.75rem;
+          color: #64748b;
+          font-size: 0.8125rem;
+        }
+
+        .total-row td {
+          border-top: 2px solid #2563eb;
+          padding: 0.75rem;
+          color: #1a1a1a;
+          font-size: 1rem;
+        }
+
+        .decoration-summary {
+          margin-top: 1rem;
+          padding: 0.75rem;
+          background: #f1f5f9;
+          border-radius: 4px;
+          font-size: 0.8125rem;
+          color: #475569;
         }
 
         .fob-info {
-          color: rgba(255, 255, 255, 0.4);
+          margin-top: 0.5rem;
           font-size: 0.75rem;
-          margin: 0.75rem 0 0;
+          color: #94a3b8;
           font-style: italic;
         }
       `}</style>

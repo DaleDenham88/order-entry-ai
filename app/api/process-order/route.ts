@@ -133,17 +133,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<GenerateL
       );
 
       if (questions.length > 0) {
+        const isFirstTime = state.step === 'product_found';
         state.step = 'clarifying_options';
         state.questions = questions;
-        
+
         // Build a friendly message
         const productInfo = `Found **${state.product.productName}** (${state.product.productId})`;
         const questionText = questions.map(q => q.question).join('\n\n');
-        
-        return NextResponse.json({ 
-          success: true, 
-          state, 
-          message: state.step === 'product_found' 
+
+        return NextResponse.json({
+          success: true,
+          state,
+          message: isFirstTime
             ? `${productInfo}\n\nI need a few details to complete your line item:\n\n${questionText}`
             : questionText
         });

@@ -16,7 +16,7 @@ const HIT_CREDENTIALS = {
 
 const HIT_ENDPOINTS = {
   productData: "https://ppds.hitpromo.net/productData?ws=1",
-  ppc: "https://ppds.hitpromo.net/PPC?ws=1",
+  ppc: "https://ppds.hitpromo.net/pricingAndConfiguration?ws=1",
 };
 
 // Global debug logs array - reset per request
@@ -34,8 +34,8 @@ function addDebugLog(operation: string, request?: string, response?: string, err
   debugLogs.push({
     timestamp: new Date().toISOString(),
     operation,
-    request: request?.substring(0, 2000),
-    response: response?.substring(0, 2000),
+    request: request?.substring(0, 5000),
+    response: response?.substring(0, 10000), // Increased limit to see full response
     error,
   });
 }
@@ -133,14 +133,25 @@ function findFobIdForProduct(xml: string, productId: string): string | null {
 
 function extractAllBlocks(xml: string, tag: string): string[] {
   const blocks: string[] = [];
-  const regex = new RegExp(
-    `<[^:]*:${tag}[^>]*>([\\s\\S]*?)<\/[^:]*:${tag}>`,
-    "gi"
-  );
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    blocks.push(match[1]);
+
+  // Try multiple patterns to handle various namespace formats
+  const patterns = [
+    // Pattern 1: with namespace prefix (ns1:Part, ns2:Part, etc.)
+    new RegExp(`<[^>/]*:${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/[^>]*:${tag}>`, "gi"),
+    // Pattern 2: without namespace prefix (<Part>, <Part attr="val">)
+    new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "gi"),
+  ];
+
+  for (const regex of patterns) {
+    let match;
+    while ((match = regex.exec(xml)) !== null) {
+      // Avoid duplicates
+      if (!blocks.includes(match[1])) {
+        blocks.push(match[1]);
+      }
+    }
   }
+
   return blocks;
 }
 
@@ -224,7 +235,17 @@ function parseConfigurationResponse(
 
   // Parse Parts
   const parts: Part[] = [];
-  const partBlocks = extractAllBlocks(xml, "Part");
+  let partBlocks = extractAllBlocks(xml, "Part");
+
+  // Also try PartArray if no parts found directly
+  if (partBlocks.length === 0) {
+    const partArrayBlocks = extractAllBlocks(xml, "PartArray");
+    if (partArrayBlocks.length > 0) {
+      partBlocks = extractAllBlocks(partArrayBlocks[0], "Part");
+    }
+  }
+
+  console.log('Found Part blocks:', partBlocks.length);
 
   for (const partBlock of partBlocks) {
     const partId = extractValue(partBlock, "partId");
@@ -258,7 +279,17 @@ function parseConfigurationResponse(
 
   // Parse Locations
   const locations: Location[] = [];
-  const locationBlocks = extractAllBlocks(xml, "Location");
+  let locationBlocks = extractAllBlocks(xml, "Location");
+
+  // Also try LocationArray if no locations found directly
+  if (locationBlocks.length === 0) {
+    const locationArrayBlocks = extractAllBlocks(xml, "LocationArray");
+    if (locationArrayBlocks.length > 0) {
+      locationBlocks = extractAllBlocks(locationArrayBlocks[0], "Location");
+    }
+  }
+
+  console.log('Found Location blocks:', locationBlocks.length);
 
   for (const locBlock of locationBlocks) {
     const locationId = extractValue(locBlock, "locationId");

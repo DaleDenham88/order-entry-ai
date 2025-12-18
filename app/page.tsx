@@ -56,10 +56,14 @@ export default function OrderEntryPage() {
       });
 
       const data = await response.json();
+      console.log('API Response:', data);
 
       // Always update debug logs if present
       if (data.debugLogs) {
+        console.log('Received debug logs:', data.debugLogs.length, 'entries');
         setDebugLogs(prev => [...prev, ...data.debugLogs]);
+        // Scroll debug panel to bottom
+        setTimeout(() => debugEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
 
       if (data.success) {

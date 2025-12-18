@@ -61,10 +61,7 @@ export async function getFobPoints(productId: string): Promise<string | null> {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "text/xml; charset=utf-8",
-      "SOAPAction": "getFobPoints",
-      "User-Agent": "PromoStandards-Client/1.0",
-      "Accept": "*/*",
-      "Cache-Control": "no-cache",
+      "SOAPAction": '"getFobPoints"',  // Quotes required around action name
     };
 
     addDebugLog('GetFobPoints Headers', JSON.stringify(headers, null, 2));
@@ -190,10 +187,7 @@ export async function getConfigurationAndPricing(
       method: "POST",
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": "getConfigurationAndPricing",
-        "User-Agent": "PromoStandards-Client/1.0",
-        "Accept": "*/*",
-        "Cache-Control": "no-cache",
+        "SOAPAction": '"getConfigurationAndPricing"',  // Quotes required
       },
       body: soapEnvelope,
     });

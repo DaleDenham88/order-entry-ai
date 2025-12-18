@@ -16,7 +16,7 @@ const HIT_CREDENTIALS = {
 
 const HIT_ENDPOINTS = {
   productData: "https://ppds.hitpromo.net/productData?ws=1",
-  ppc: "https://ppds.hitpromo.net/PPC?ws=1",
+  ppc: "https://ppds.hitpromo.net/PPC/?ws=1",  // Added trailing slash
 };
 
 // Global debug logs array - reset per request
@@ -56,7 +56,7 @@ export async function getFobPoints(productId: string): Promise<string | null> {
   </soap:Body>
 </soap:Envelope>`;
 
-  addDebugLog('GetFobPoints Request', soapEnvelope);
+  addDebugLog('GetFobPoints Request', `URL: ${HIT_ENDPOINTS.ppc}\n\n${soapEnvelope}`);
 
   try {
     const response = await fetch(HIT_ENDPOINTS.ppc, {

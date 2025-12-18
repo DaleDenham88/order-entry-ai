@@ -6,6 +6,7 @@ import {
   Charge,
   ChargePrice,
   PartPrice,
+  DebugLogEntry,
 } from "../types";
 
 const HIT_CREDENTIALS = {
@@ -17,6 +18,27 @@ const HIT_ENDPOINTS = {
   productData: "https://ppds.hitpromo.net/productData?ws=1",
   ppc: "https://ppds.hitpromo.net/PPC?ws=1",
 };
+
+// Global debug logs array - reset per request
+let debugLogs: DebugLogEntry[] = [];
+
+export function getDebugLogs(): DebugLogEntry[] {
+  return debugLogs;
+}
+
+export function clearDebugLogs(): void {
+  debugLogs = [];
+}
+
+function addDebugLog(operation: string, request?: string, response?: string, error?: string): void {
+  debugLogs.push({
+    timestamp: new Date().toISOString(),
+    operation,
+    request: request?.substring(0, 2000),
+    response: response?.substring(0, 2000),
+    error,
+  });
+}
 
 // Get FOB points for a product (required before getting configuration)
 export async function getFobPoints(productId: string): Promise<string | null> {
@@ -34,23 +56,30 @@ export async function getFobPoints(productId: string): Promise<string | null> {
   </soap:Body>
 </soap:Envelope>`;
 
-  const response = await fetch(HIT_ENDPOINTS.ppc, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: "getFobPoints",
-    },
-    body: soapEnvelope,
-  });
+  addDebugLog('GetFobPoints Request', soapEnvelope);
 
-  const xmlText = await response.text();
-  console.log('FOB Response:', xmlText.substring(0, 500));
+  try {
+    const response = await fetch(HIT_ENDPOINTS.ppc, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: "getFobPoints",
+      },
+      body: soapEnvelope,
+    });
 
-  // Extract fobId from response
-  const fobId = extractValue(xmlText, "fobId");
-  console.log('Extracted FOB ID:', fobId);
+    const xmlText = await response.text();
 
-  return fobId || null;
+    // Extract fobId from response
+    const fobId = extractValue(xmlText, "fobId");
+
+    addDebugLog('GetFobPoints Response', undefined, xmlText, fobId ? undefined : 'No fobId found in response');
+
+    return fobId || null;
+  } catch (error) {
+    addDebugLog('GetFobPoints Error', undefined, undefined, String(error));
+    return null;
+  }
 }
 
 // Simple XML parser helpers
@@ -109,24 +138,38 @@ export async function getConfigurationAndPricing(
   </soap:Body>
 </soap:Envelope>`;
 
-  const response = await fetch(HIT_ENDPOINTS.ppc, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: "getConfigurationAndPricing",
-    },
-    body: soapEnvelope,
-  });
+  addDebugLog('GetConfigurationAndPricing Request', soapEnvelope);
 
-  const xmlText = await response.text();
-  console.log('SOAP Response length:', xmlText.length);
-  const result = parseConfigurationResponse(xmlText, productId);
-  console.log('Parsed parts count:', result.parts.length);
-  console.log('Parsed locations count:', result.locations.length);
-  if (result.parts.length > 0) {
-    console.log('First part:', result.parts[0].partId, result.parts[0].partDescription);
+  try {
+    const response = await fetch(HIT_ENDPOINTS.ppc, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: "getConfigurationAndPricing",
+      },
+      body: soapEnvelope,
+    });
+
+    const xmlText = await response.text();
+    const result = parseConfigurationResponse(xmlText, productId);
+
+    addDebugLog(
+      'GetConfigurationAndPricing Response',
+      undefined,
+      xmlText,
+      result.parts.length === 0 ? `No parts found. Locations: ${result.locations.length}` : undefined
+    );
+
+    return result;
+  } catch (error) {
+    addDebugLog('GetConfigurationAndPricing Error', undefined, undefined, String(error));
+    return {
+      productId,
+      currency: "USD",
+      parts: [],
+      locations: [],
+    };
   }
-  return result;
 }
 
 function parseConfigurationResponse(

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { ConversationState, OrderLineItem, AvailableOptions, RequiredFields } from '@/types';
+import { ConversationState, OrderLineItem, AvailableOptions, RequiredFields, DebugLogEntry } from '@/types';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -28,7 +28,9 @@ export default function OrderEntryPage() {
   const [availableOptions, setAvailableOptions] = useState<AvailableOptions | null>(null);
   const [requiredFields, setRequiredFields] = useState<RequiredFields | null>(null);
   const [productInfo, setProductInfo] = useState<ProductInfo | null>(null);
+  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const debugEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -54,6 +56,11 @@ export default function OrderEntryPage() {
       });
 
       const data = await response.json();
+
+      // Always update debug logs if present
+      if (data.debugLogs) {
+        setDebugLogs(prev => [...prev, ...data.debugLogs]);
+      }
 
       if (data.success) {
         setConversationState(data.state);
@@ -137,6 +144,7 @@ export default function OrderEntryPage() {
     setAvailableOptions(null);
     setRequiredFields(null);
     setProductInfo(null);
+    setDebugLogs([]);
     setMessages([
       {
         role: 'assistant',
@@ -162,8 +170,51 @@ export default function OrderEntryPage() {
 
       {/* Main Content */}
       <div style={styles.mainContent}>
+        {/* Debug Panel */}
+        <div style={styles.debugPanel}>
+          <div style={styles.debugPanelHeader}>
+            <h2 style={styles.debugPanelTitle}>API Debug Log</h2>
+            <button
+              onClick={() => setDebugLogs([])}
+              style={styles.clearDebugButton}
+            >
+              Clear
+            </button>
+          </div>
+          <div style={styles.debugContent}>
+            {debugLogs.length === 0 ? (
+              <div style={styles.debugEmpty}>No API calls yet. Enter an order to see the SOAP requests/responses.</div>
+            ) : (
+              debugLogs.map((log, idx) => (
+                <div key={idx} style={styles.debugEntry}>
+                  <div style={styles.debugEntryHeader}>
+                    <span style={styles.debugOperation}>{log.operation}</span>
+                    <span style={styles.debugTimestamp}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  {log.error && (
+                    <div style={styles.debugError}>Error: {log.error}</div>
+                  )}
+                  {log.request && (
+                    <div style={styles.debugSection}>
+                      <div style={styles.debugSectionTitle}>Request:</div>
+                      <pre style={styles.debugXml}>{log.request}</pre>
+                    </div>
+                  )}
+                  {log.response && (
+                    <div style={styles.debugSection}>
+                      <div style={styles.debugSectionTitle}>Response:</div>
+                      <pre style={styles.debugXml}>{log.response}</pre>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+            <div ref={debugEndRef} />
+          </div>
+        </div>
+
         {/* Chat Area */}
-        <div style={{ ...styles.chatArea, flex: showOptionsPanel ? '1 1 60%' : '1 1 100%' }}>
+        <div style={{ ...styles.chatArea, flex: showOptionsPanel ? '1 1 40%' : '1 1 60%' }}>
           <div style={styles.messagesContainer}>
             {messages.map((msg, idx) => (
               <div
@@ -440,6 +491,103 @@ const styles: { [key: string]: React.CSSProperties } = {
     height: '100vh',
     backgroundColor: '#f8fafc',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  debugPanel: {
+    flex: '0 0 350px',
+    backgroundColor: '#1e1e1e',
+    color: '#d4d4d4',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    borderRight: '1px solid #333',
+  },
+  debugPanelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px 16px',
+    backgroundColor: '#252526',
+    borderBottom: '1px solid #333',
+  },
+  debugPanelTitle: {
+    margin: 0,
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#cccccc',
+  },
+  clearDebugButton: {
+    padding: '4px 12px',
+    backgroundColor: 'transparent',
+    color: '#888',
+    border: '1px solid #555',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  debugContent: {
+    flex: 1,
+    overflow: 'auto',
+    padding: '12px',
+  },
+  debugEmpty: {
+    color: '#666',
+    fontSize: '12px',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: '20px',
+  },
+  debugEntry: {
+    marginBottom: '16px',
+    padding: '12px',
+    backgroundColor: '#2d2d2d',
+    borderRadius: '6px',
+    border: '1px solid #404040',
+  },
+  debugEntryHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '8px',
+  },
+  debugOperation: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#569cd6',
+  },
+  debugTimestamp: {
+    fontSize: '11px',
+    color: '#666',
+  },
+  debugError: {
+    padding: '8px',
+    backgroundColor: '#5a1d1d',
+    color: '#f48771',
+    borderRadius: '4px',
+    fontSize: '12px',
+    marginBottom: '8px',
+  },
+  debugSection: {
+    marginTop: '8px',
+  },
+  debugSectionTitle: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#888',
+    marginBottom: '4px',
+    textTransform: 'uppercase',
+  },
+  debugXml: {
+    margin: 0,
+    padding: '8px',
+    backgroundColor: '#1e1e1e',
+    borderRadius: '4px',
+    fontSize: '10px',
+    lineHeight: 1.4,
+    overflow: 'auto',
+    maxHeight: '200px',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    color: '#ce9178',
   },
   header: {
     display: 'flex',

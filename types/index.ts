@@ -119,6 +119,15 @@ export interface RequiredFields {
   decorationColors: boolean;
 }
 
+// Debug log entry for API calls
+export interface DebugLogEntry {
+  timestamp: string;
+  operation: string;
+  request?: string;
+  response?: string;
+  error?: string;
+}
+
 // Extended API response for better UI
 export interface OrderApiResponse {
   success: boolean;
@@ -132,4 +141,5 @@ export interface OrderApiResponse {
     productName: string;
     quantity: number;
   };
+  debugLogs?: DebugLogEntry[];
 }

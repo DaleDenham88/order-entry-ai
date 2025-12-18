@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ConversationState, AvailableOptions, RequiredFields, PricingConfiguration } from '@/types';
-import { getConfigurationAndPricing, getProductData } from '@/lib/promostandards';
+import { ConversationState, AvailableOptions, RequiredFields, PricingConfiguration, DebugLogEntry } from '@/types';
+import { getConfigurationAndPricing, getProductData, getDebugLogs, clearDebugLogs } from '@/lib/promostandards';
 import { parseUserRequest, parseUserResponse, buildLineItem } from '@/lib/ai-assistant';
 
 export async function POST(request: NextRequest) {
+  // Clear debug logs at the start of each request
+  clearDebugLogs();
+
   try {
     const body = await request.json();
     const { userInput, currentState, selectionUpdate } = body as {
@@ -26,6 +29,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Please specify a product ID (e.g., "order 500 of product 55900")',
+          debugLogs: getDebugLogs(),
         });
       }
 
@@ -107,6 +111,7 @@ export async function POST(request: NextRequest) {
               productName: productData.productName,
               quantity: parsedRequest.quantity || 0,
             },
+            debugLogs: getDebugLogs(),
           });
         }
       }
@@ -124,6 +129,7 @@ export async function POST(request: NextRequest) {
           productName: productData.productName,
           quantity: parsedRequest.quantity || 0,
         },
+        debugLogs: getDebugLogs(),
       });
     }
 
@@ -203,6 +209,7 @@ export async function POST(request: NextRequest) {
             productName: productData.productName,
             quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
           },
+          debugLogs: getDebugLogs(),
         });
       }
     }
@@ -226,6 +233,7 @@ export async function POST(request: NextRequest) {
         productName: productData.productName,
         quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
       } : undefined,
+      debugLogs: getDebugLogs(),
     });
 
   } catch (error) {
@@ -233,6 +241,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
+      debugLogs: getDebugLogs(),
     });
   }
 }

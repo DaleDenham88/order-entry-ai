@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       console.log('Available options:', JSON.stringify(availableOptions, null, 2));
 
       // Check if we can build a line item (all required fields filled)
-      if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation && !requiredFields.decorationColors) {
+      if (allRequiredFieldsFilled(requiredFields)) {
         const lineItem = buildLineItem(newState, productData.productName);
         if (lineItem) {
           newState.lineItem = lineItem;
@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
     const requiredFields = getRequiredFields(currentState.selectedOptions);
 
     // If all required fields are filled, build line item
-    if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation && !requiredFields.decorationColors && currentState.pricingData) {
+    if (allRequiredFieldsFilled(requiredFields) && currentState.pricingData) {
       const productData = await getProductData(currentState.pricingData.productId);
       const lineItem = buildLineItem(currentState, productData.productName);
 
@@ -288,7 +288,7 @@ async function handleSelectionUpdate(
   const requiredFields = getRequiredFields(currentState.selectedOptions);
 
   // If all required fields are filled, build line item
-  if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation && !requiredFields.decorationColors && currentState.pricingData) {
+  if (allRequiredFieldsFilled(requiredFields) && currentState.pricingData) {
     const productData = await getProductData(currentState.pricingData.productId);
     const lineItem = buildLineItem(currentState, productData.productName);
 
@@ -371,20 +371,30 @@ function buildAvailableOptions(pricingData: PricingConfiguration, selectedOption
 
 function getRequiredFields(selectedOptions: Record<string, any>): RequiredFields {
   return {
+    quantity: !selectedOptions.quantity,
     color: !selectedOptions.partId,
     decorationMethod: !selectedOptions.decorationMethod,
     decorationLocation: !selectedOptions.decorationLocation,
-    decorationColors: !selectedOptions.decorationColors, // Now required
+    decorationColors: !selectedOptions.decorationColors,
   };
 }
 
 function getMissingFieldsList(requiredFields: RequiredFields): string[] {
   const missing: string[] = [];
+  if (requiredFields.quantity) missing.push('quantity');
   if (requiredFields.color) missing.push('color');
   if (requiredFields.decorationMethod) missing.push('decoration method');
   if (requiredFields.decorationLocation) missing.push('decoration location');
   if (requiredFields.decorationColors) missing.push('imprint colors');
   return missing;
+}
+
+function allRequiredFieldsFilled(requiredFields: RequiredFields): boolean {
+  return !requiredFields.quantity &&
+         !requiredFields.color &&
+         !requiredFields.decorationMethod &&
+         !requiredFields.decorationLocation &&
+         !requiredFields.decorationColors;
 }
 
 // Auto-select options when only one choice is available

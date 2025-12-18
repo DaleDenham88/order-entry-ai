@@ -306,6 +306,32 @@ export default function OrderEntryPage() {
             </div>
 
             <div style={styles.optionsContent}>
+              {/* Quantity Section */}
+              <div style={styles.optionSection}>
+                <div style={styles.optionSectionHeader}>
+                  <span style={styles.optionSectionTitle}>Quantity</span>
+                  {requiredFields?.quantity ? (
+                    <span style={styles.requiredBadge}>Required</span>
+                  ) : (
+                    <span style={styles.selectedBadge}>✓</span>
+                  )}
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  value={productInfo?.quantity || ''}
+                  onChange={(e) => {
+                    const qty = parseInt(e.target.value, 10);
+                    if (qty > 0) {
+                      handleOptionSelect('quantity', qty);
+                    }
+                  }}
+                  disabled={loading}
+                  placeholder="Enter quantity..."
+                  style={styles.quantityInput}
+                />
+              </div>
+
               {/* Colors Section */}
               <OptionSection
                 title="Color"
@@ -845,6 +871,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#3b82f6',
     color: 'white',
     borderColor: '#3b82f6',
+  },
+  quantityInput: {
+    width: '100%',
+    padding: '10px 14px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '6px',
+    fontSize: '14px',
+    outline: 'none',
+    transition: 'border-color 0.2s',
   },
   lineItemContainer: {
     marginTop: '12px',

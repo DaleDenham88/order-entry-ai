@@ -113,6 +113,7 @@ export interface AvailableOptions {
 
 // What fields are still required
 export interface RequiredFields {
+  quantity: boolean;
   color: boolean;
   decorationMethod: boolean;
   decorationLocation: boolean;

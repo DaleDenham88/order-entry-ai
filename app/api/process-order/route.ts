@@ -219,9 +219,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Track what selections were made from this input
+    const newSelections: string[] = [];
+
     // Merge extracted values into selectedOptions
     for (const [key, value] of Object.entries(extracted)) {
       if (value !== null && value !== undefined) {
+        // Track if this is a new/changed selection
+        if (currentState.selectedOptions[key] !== value) {
+          const displayValue = getDisplayValueForSelection(key, value, currentState.pricingData);
+          if (displayValue) {
+            newSelections.push(displayValue);
+          }
+        }
         currentState.selectedOptions[key] = value;
       }
     }
@@ -231,6 +241,11 @@ export async function POST(request: NextRequest) {
       ? buildAvailableOptions(currentState.pricingData, currentState.selectedOptions)
       : undefined;
     const requiredFields = getRequiredFields(currentState.selectedOptions);
+
+    // Build feedback message about what was selected
+    const selectionFeedback = newSelections.length > 0
+      ? `Based on your input, I've selected: ${newSelections.join(', ')}. `
+      : '';
 
     // If all required fields are filled, build line item
     if (allRequiredFieldsFilled(requiredFields) && currentState.pricingData) {
@@ -242,7 +257,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           state: currentState,
-          message: `Perfect! Here's your complete order:`,
+          message: `${selectionFeedback}Here's your complete order:`,
           availableOptions,
           requiredFields,
           productInfo: {
@@ -265,8 +280,8 @@ export async function POST(request: NextRequest) {
       success: true,
       state: currentState,
       message: missingFields.length > 0
-        ? `Please select: ${missingFields.join(', ')}`
-        : 'Processing your selections...',
+        ? `${selectionFeedback}Still need: ${missingFields.join(', ')}`
+        : `${selectionFeedback}All selections complete!`,
       availableOptions,
       requiredFields,
       productInfo: currentState.pricingData ? {
@@ -293,6 +308,11 @@ async function handleSelectionUpdate(
 ) {
   const { field, value } = selectionUpdate;
 
+  // Get display value for the selection
+  const selectionDisplay = value !== null
+    ? getDisplayValueForSelection(field, value, currentState.pricingData)
+    : null;
+
   // Update the selected option
   if (value === null) {
     delete currentState.selectedOptions[field];
@@ -316,6 +336,9 @@ async function handleSelectionUpdate(
     : undefined;
   const requiredFields = getRequiredFields(currentState.selectedOptions);
 
+  // Build selection feedback
+  const selectionFeedback = selectionDisplay ? `Selected ${selectionDisplay}. ` : '';
+
   // If all required fields are filled, build line item
   if (allRequiredFieldsFilled(requiredFields) && currentState.pricingData) {
     const productData = await getProductData(currentState.pricingData.productId);
@@ -326,7 +349,7 @@ async function handleSelectionUpdate(
       return NextResponse.json({
         success: true,
         state: currentState,
-        message: `Order complete!`,
+        message: `${selectionFeedback}Order complete!`,
         availableOptions,
         requiredFields,
         productInfo: {
@@ -348,8 +371,8 @@ async function handleSelectionUpdate(
     success: true,
     state: currentState,
     message: missingFields.length > 0
-      ? `Selected ${field}. Still need: ${missingFields.join(', ')}`
-      : 'All selections made!',
+      ? `${selectionFeedback}Still need: ${missingFields.join(', ')}`
+      : `${selectionFeedback}All selections complete!`,
     availableOptions,
     requiredFields,
     productInfo: currentState.pricingData ? {
@@ -459,6 +482,36 @@ function allRequiredFieldsFilled(requiredFields: RequiredFields): boolean {
          !requiredFields.decorationMethod &&
          !requiredFields.decorationLocation &&
          !requiredFields.decorationColors;
+}
+
+// Get human-readable display value for a selection
+function getDisplayValueForSelection(
+  field: string,
+  value: any,
+  pricingData?: PricingConfiguration
+): string | null {
+  switch (field) {
+    case 'quantity':
+      return `Qty: ${value}`;
+    case 'partId':
+      if (pricingData) {
+        const part = pricingData.parts.find(p => p.partId === value);
+        if (part?.partDescription) {
+          return `Color: ${part.partDescription}`;
+        }
+      }
+      return `Color: ${value}`;
+    case 'color':
+      return `Color: ${value}`;
+    case 'decorationMethod':
+      return `Method: ${value}`;
+    case 'decorationLocation':
+      return `Location: ${value}`;
+    case 'decorationColors':
+      return value === 0 ? 'Imprint: None (laser)' : `Imprint Colors: ${value}`;
+    default:
+      return null;
+  }
 }
 
 // Auto-select options when only one choice is available

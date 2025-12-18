@@ -29,9 +29,19 @@ export default function OrderEntryPage() {
   const [requiredFields, setRequiredFields] = useState<RequiredFields | null>(null);
   const [productInfo, setProductInfo] = useState<ProductInfo | null>(null);
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  const [quantityInput, setQuantityInput] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const debugEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync quantity input with productInfo when it changes
+  useEffect(() => {
+    if (productInfo?.quantity) {
+      setQuantityInput(String(productInfo.quantity));
+    } else {
+      setQuantityInput('');
+    }
+  }, [productInfo?.quantity]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -335,15 +345,25 @@ export default function OrderEntryPage() {
                 <input
                   type="number"
                   min="1"
-                  value={productInfo?.quantity || ''}
-                  onChange={(e) => {
-                    const qty = parseInt(e.target.value, 10);
-                    if (qty > 0) {
+                  value={quantityInput}
+                  onChange={(e) => setQuantityInput(e.target.value)}
+                  onBlur={() => {
+                    const qty = parseInt(quantityInput, 10);
+                    if (qty > 0 && qty !== productInfo?.quantity) {
                       handleOptionSelect('quantity', qty);
                     }
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const qty = parseInt(quantityInput, 10);
+                      if (qty > 0) {
+                        handleOptionSelect('quantity', qty);
+                      }
+                      e.currentTarget.blur();
+                    }
+                  }}
                   disabled={loading}
-                  placeholder="Enter quantity..."
+                  placeholder="Enter quantity and press Enter..."
                   style={styles.quantityInput}
                 />
               </div>

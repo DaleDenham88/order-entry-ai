@@ -86,6 +86,9 @@ export async function POST(request: NextRequest) {
         pricingData,
       };
 
+      // Auto-select single options
+      autoSelectSingleOptions(newState, pricingData);
+
       // Build available options for the UI
       const availableOptions = buildAvailableOptions(pricingData, newState.selectedOptions);
       const requiredFields = getRequiredFields(newState.selectedOptions);
@@ -134,7 +137,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Follow-up response - parse answer and update state
-    const extracted = await parseUserResponse(userInput, currentState);
+    // Build available options context for the AI
+    const optionsContext = currentState.pricingData ? {
+      colors: currentState.pricingData.parts.map(p => ({ partId: p.partId, name: p.partDescription })),
+      decorationMethods: getUniqueDecorationMethods(currentState.pricingData),
+      decorationLocations: currentState.pricingData.locations.map(l => ({ id: l.locationId, name: l.locationName })),
+      maxDecorationColors: getMaxDecorationColors(currentState.pricingData),
+    } : undefined;
+
+    const extracted = await parseUserResponse(userInput, currentState, optionsContext);
+    console.log('Extracted from follow-up:', extracted);
 
     // Try to match extracted values to actual options
     if (currentState.pricingData) {
@@ -372,4 +384,55 @@ function getMissingFieldsList(requiredFields: RequiredFields): string[] {
   if (requiredFields.decorationMethod) missing.push('decoration method');
   if (requiredFields.decorationLocation) missing.push('decoration location');
   return missing;
+}
+
+// Auto-select options when only one choice is available
+function autoSelectSingleOptions(state: ConversationState, pricingData: PricingConfiguration): void {
+  // Filter out parts without descriptions (like accessories)
+  const mainParts = pricingData.parts.filter(p => p.partDescription && p.partDescription.trim() !== '');
+
+  // Auto-select color if only one main color option
+  if (!state.selectedOptions.partId && mainParts.length === 1) {
+    state.selectedOptions.partId = mainParts[0].partId;
+    console.log('Auto-selected single color:', mainParts[0].partDescription);
+  }
+
+  // Get unique decoration methods
+  const methods = getUniqueDecorationMethods(pricingData);
+
+  // Auto-select decoration method if only one
+  if (!state.selectedOptions.decorationMethod && methods.length === 1) {
+    state.selectedOptions.decorationMethod = methods[0].name;
+    console.log('Auto-selected single decoration method:', methods[0].name);
+  }
+
+  // Auto-select location if only one
+  if (!state.selectedOptions.decorationLocation && pricingData.locations.length === 1) {
+    state.selectedOptions.decorationLocation = pricingData.locations[0].locationName;
+    console.log('Auto-selected single location:', pricingData.locations[0].locationName);
+  }
+}
+
+// Get unique decoration methods across all locations
+function getUniqueDecorationMethods(pricingData: PricingConfiguration): Array<{ id: string; name: string }> {
+  const methodsMap = new Map<string, string>();
+  for (const location of pricingData.locations) {
+    for (const decoration of location.decorations) {
+      methodsMap.set(decoration.decorationName, decoration.decorationId);
+    }
+  }
+  return Array.from(methodsMap.entries()).map(([name, id]) => ({ id, name }));
+}
+
+// Get maximum decoration colors across all decorations
+function getMaxDecorationColors(pricingData: PricingConfiguration): number {
+  let maxColors = 1;
+  for (const location of pricingData.locations) {
+    for (const decoration of location.decorations) {
+      if (decoration.decorationUnitsMax > maxColors) {
+        maxColors = decoration.decorationUnitsMax;
+      }
+    }
+  }
+  return maxColors;
 }

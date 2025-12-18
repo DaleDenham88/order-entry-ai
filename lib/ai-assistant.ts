@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ParsedRequest, Question, PricingConfiguration, OrderLineItem, ConversationState, LineItemCharge } from '../types';
+import { followUpExamples, formatExamplesForPrompt, findSynonymMatch } from './examples';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -154,34 +155,196 @@ Return ONLY the JSON array, no other text.`;
 
 export async function parseUserResponse(
   userInput: string,
-  currentState: ConversationState
+  currentState: ConversationState,
+  availableOptions?: {
+    colors?: Array<{ partId: string; name: string }>;
+    decorationMethods?: Array<{ id: string; name: string }>;
+    decorationLocations?: Array<{ id: string; name: string }>;
+    maxDecorationColors?: number;
+  }
 ): Promise<Record<string, any>> {
-  const prompt = `Extract answers from the user's response to fill in missing order details.
+  // Build context about what options are available
+  const colorOptions = availableOptions?.colors?.map(c => c.name).filter(n => n) || [];
+  const methodOptions = availableOptions?.decorationMethods?.map(m => m.name) || [];
+  const locationOptions = availableOptions?.decorationLocations?.map(l => l.name) || [];
+  const maxColors = availableOptions?.maxDecorationColors || 4;
 
-Current questions waiting for answers: ${JSON.stringify(currentState.questions)}
+  // First try direct matching without AI for speed
+  const directMatch = tryDirectMatch(userInput, availableOptions);
+  if (Object.keys(directMatch).length > 0) {
+    console.log('Direct match found:', directMatch);
+    // Still try AI to catch additional fields
+  }
 
+  // Build few-shot examples
+  const examples = formatExamplesForPrompt(followUpExamples, 6);
+
+  const prompt = `You are extracting order details from a user's response. Be flexible and understand intent.
+
+AVAILABLE OPTIONS:
+- Colors: ${colorOptions.length > 0 ? colorOptions.join(', ') : 'not yet loaded'}
+- Decoration Methods: ${methodOptions.length > 0 ? methodOptions.join(', ') : 'not yet loaded'}
+- Decoration Locations: ${locationOptions.length > 0 ? locationOptions.join(', ') : 'not yet loaded'}
+- Imprint Colors: 1-${maxColors}
+
+WHAT'S STILL NEEDED:
+- color/partId: ${currentState.selectedOptions.partId ? 'ALREADY SELECTED' : 'NEEDED'}
+- decorationMethod: ${currentState.selectedOptions.decorationMethod ? 'ALREADY SELECTED' : 'NEEDED'}
+- decorationLocation: ${currentState.selectedOptions.decorationLocation ? 'ALREADY SELECTED' : 'NEEDED'}
+- decorationColors: ${currentState.selectedOptions.decorationColors ? 'ALREADY SELECTED' : 'optional'}
+
+EXAMPLES OF EXTRACTION:
+${examples}
+
+NOW EXTRACT FROM:
 User's response: "${userInput}"
 
-Return a JSON object with field names as keys and extracted values. Only include fields that were answered.
+RULES:
+1. Match user's words to the closest AVAILABLE OPTION (case-insensitive, partial matches OK)
+2. "silk screen" = "Screen Print", "CB" = "CB DRINKWARE SMALL", etc.
+3. Extract ALL fields mentioned, even if we only asked about one
+4. For colors like "navy blue" match to "NAVY BLUE", "blue" matches "BLUE"
+5. Numbers for decoration colors: "2 color" = 2, "full color" = ${maxColors}
+6. "the first one" or "1" when given a list means the first option
+7. If user says something like "wrap" and WRAP is an available location, match it
 
-Return ONLY the JSON object, no other text.`;
+Return ONLY a JSON object with the fields you can extract:
+{
+  "color": "exact color name from available options or null",
+  "partId": "exact partId if you can determine it or null",
+  "decorationMethod": "exact method name from available options or null",
+  "decorationLocation": "exact location name from available options or null",
+  "decorationColors": number or null
+}`;
 
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 500,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }],
+    });
 
-  const content = message.content[0];
-  if (content.type === 'text') {
-    try {
+    const content = message.content[0];
+    if (content.type === 'text') {
       const text = content.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      return JSON.parse(text);
-    } catch (e) {
-      return {};
+      const aiParsed = JSON.parse(text);
+      console.log('AI parsed response:', aiParsed);
+
+      // Merge direct match with AI results
+      const result = { ...directMatch };
+
+      // Process AI results, matching to actual available options
+      if (aiParsed.color && !result.color) {
+        const matchedColor = findSynonymMatch(aiParsed.color, colorOptions);
+        if (matchedColor) {
+          result.color = matchedColor;
+          // Also set partId if we can find it
+          const part = availableOptions?.colors?.find(c => c.name === matchedColor);
+          if (part) result.partId = part.partId;
+        }
+      }
+
+      if (aiParsed.partId && !result.partId) {
+        result.partId = aiParsed.partId;
+      }
+
+      if (aiParsed.decorationMethod && !result.decorationMethod) {
+        const matchedMethod = findSynonymMatch(aiParsed.decorationMethod, methodOptions);
+        result.decorationMethod = matchedMethod || aiParsed.decorationMethod;
+      }
+
+      if (aiParsed.decorationLocation && !result.decorationLocation) {
+        const matchedLocation = findSynonymMatch(aiParsed.decorationLocation, locationOptions);
+        result.decorationLocation = matchedLocation || aiParsed.decorationLocation;
+      }
+
+      if (aiParsed.decorationColors && !result.decorationColors) {
+        result.decorationColors = aiParsed.decorationColors;
+      }
+
+      return result;
+    }
+  } catch (e) {
+    console.error('AI parsing error:', e);
+  }
+
+  return directMatch;
+}
+
+// Try to match user input directly without AI for common patterns
+function tryDirectMatch(
+  userInput: string,
+  availableOptions?: {
+    colors?: Array<{ partId: string; name: string }>;
+    decorationMethods?: Array<{ id: string; name: string }>;
+    decorationLocations?: Array<{ id: string; name: string }>;
+    maxDecorationColors?: number;
+  }
+): Record<string, any> {
+  const result: Record<string, any> = {};
+  const input = userInput.toLowerCase().trim();
+
+  // Try to match color
+  if (availableOptions?.colors) {
+    for (const color of availableOptions.colors) {
+      if (color.name && input.includes(color.name.toLowerCase())) {
+        result.color = color.name;
+        result.partId = color.partId;
+        break;
+      }
+    }
+    // Also check if input exactly matches a color name
+    if (!result.color) {
+      const exactMatch = availableOptions.colors.find(c =>
+        c.name && c.name.toLowerCase() === input
+      );
+      if (exactMatch) {
+        result.color = exactMatch.name;
+        result.partId = exactMatch.partId;
+      }
     }
   }
-  return {};
+
+  // Try to match decoration method
+  if (availableOptions?.decorationMethods) {
+    const methodMatch = findSynonymMatch(input, availableOptions.decorationMethods.map(m => m.name));
+    if (methodMatch) {
+      result.decorationMethod = methodMatch;
+    }
+  }
+
+  // Try to match decoration location
+  if (availableOptions?.decorationLocations) {
+    const locationMatch = findSynonymMatch(input, availableOptions.decorationLocations.map(l => l.name));
+    if (locationMatch) {
+      result.decorationLocation = locationMatch;
+    }
+  }
+
+  // Try to extract decoration colors
+  const colorCountPatterns = [
+    /(\d+)\s*color/i,
+    /full\s*color/i,
+    /single\s*color/i,
+    /one\s*color/i,
+    /^(\d)$/,
+  ];
+
+  for (const pattern of colorCountPatterns) {
+    const match = input.match(pattern);
+    if (match) {
+      if (pattern.source.includes('full')) {
+        result.decorationColors = availableOptions?.maxDecorationColors || 4;
+      } else if (pattern.source.includes('single') || pattern.source.includes('one')) {
+        result.decorationColors = 1;
+      } else if (match[1]) {
+        result.decorationColors = parseInt(match[1], 10);
+      }
+      break;
+    }
+  }
+
+  return result;
 }
 
 export function buildLineItem(

@@ -63,10 +63,12 @@ export async function getFobPoints(productId: string): Promise<string | null> {
       method: "POST",
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
-        SOAPAction: "getFobPoints",
+        "Accept": "text/xml",
       },
       body: soapEnvelope,
     });
+
+    addDebugLog('GetFobPoints Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
 
     const xmlText = await response.text();
 
@@ -181,10 +183,12 @@ export async function getConfigurationAndPricing(
       method: "POST",
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
-        SOAPAction: "getConfigurationAndPricing",
+        "Accept": "text/xml",
       },
       body: soapEnvelope,
     });
+
+    addDebugLog('GetConfigurationAndPricing Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
 
     const xmlText = await response.text();
     const result = parseConfigurationResponse(xmlText, productId);

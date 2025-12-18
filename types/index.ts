@@ -145,3 +145,45 @@ export interface OrderApiResponse {
   };
   debugLogs?: DebugLogEntry[];
 }
+
+// Learning System Types
+export interface LearningExample {
+  id: string;
+  type: 'parsing' | 'color' | 'decoration' | 'location' | 'quantity';
+  userInput: string;
+  matchedValue: string;
+  context?: string; // Additional context like product category
+  confidence: number; // 0-1, higher = more reliable
+  usageCount: number; // How many times this example has been used
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface LearningCorrection {
+  id: string;
+  userInput: string;
+  originalMatch: string | null; // What the system matched (null if no match)
+  correctedValue: string; // What it should have been
+  field: 'color' | 'decorationMethod' | 'decorationLocation' | 'decorationColors' | 'quantity';
+  createdAt: string;
+}
+
+export interface LearningFeedback {
+  interactionId: string;
+  wasCorrect: boolean;
+  userInput: string;
+  selections: Record<string, any>;
+  correction?: {
+    field: string;
+    wrongValue: any;
+    correctValue: any;
+  };
+  timestamp: string;
+}
+
+export interface LearningStats {
+  totalExamples: number;
+  totalCorrections: number;
+  accuracyRate: number;
+  topPatterns: Array<{ pattern: string; count: number }>;
+}

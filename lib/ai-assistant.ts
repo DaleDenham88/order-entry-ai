@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ParsedRequest, Question, PricingConfiguration, OrderLineItem, ConversationState, LineItemCharge } from '../types';
 import { followUpExamples, formatExamplesForPrompt, findSynonymMatch } from './examples';
+import { tryLearnedMatch, getExamplesForPrompt, addExample } from './learning';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -169,15 +170,46 @@ export async function parseUserResponse(
   const locationOptions = availableOptions?.decorationLocations?.map(l => l.name) || [];
   const maxColors = availableOptions?.maxDecorationColors || 4;
 
-  // First try direct matching without AI for speed
+  // First try learned matches (from corrections and high-confidence examples)
+  const learnedResults: Record<string, any> = {};
+  if (!currentState.selectedOptions.partId) {
+    const learnedColor = tryLearnedMatch(userInput, 'color');
+    if (learnedColor) {
+      // Find the partId for this color
+      const matchingPart = availableOptions?.colors?.find(c =>
+        c.name.toLowerCase() === String(learnedColor).toLowerCase()
+      );
+      if (matchingPart) {
+        learnedResults.color = learnedColor;
+        learnedResults.partId = matchingPart.partId;
+      }
+    }
+  }
+  if (!currentState.selectedOptions.decorationMethod) {
+    const learnedMethod = tryLearnedMatch(userInput, 'decorationMethod');
+    if (learnedMethod) learnedResults.decorationMethod = learnedMethod;
+  }
+  if (!currentState.selectedOptions.decorationLocation) {
+    const learnedLocation = tryLearnedMatch(userInput, 'decorationLocation');
+    if (learnedLocation) learnedResults.decorationLocation = learnedLocation;
+  }
+
+  if (Object.keys(learnedResults).length > 0) {
+    console.log('Learned match found:', learnedResults);
+  }
+
+  // Then try direct matching without AI for speed
   const directMatch = tryDirectMatch(userInput, availableOptions);
   if (Object.keys(directMatch).length > 0) {
     console.log('Direct match found:', directMatch);
-    // Still try AI to catch additional fields
   }
 
-  // Build few-shot examples
-  const examples = formatExamplesForPrompt(followUpExamples, 6);
+  // Merge learned and direct matches
+  const preAiMatches = { ...learnedResults, ...directMatch };
+
+  // Build few-shot examples (static + learned)
+  const staticExamples = formatExamplesForPrompt(followUpExamples, 4);
+  const learnedExamples = getExamplesForPrompt(userInput);
 
   const prompt = `You are extracting order details from a user's response. Be flexible and understand intent.
 
@@ -194,7 +226,8 @@ WHAT'S STILL NEEDED:
 - decorationColors: ${currentState.selectedOptions.decorationColors ? 'ALREADY SELECTED' : 'optional'}
 
 EXAMPLES OF EXTRACTION:
-${examples}
+${staticExamples}
+${learnedExamples}
 
 NOW EXTRACT FROM:
 User's response: "${userInput}"
@@ -230,8 +263,8 @@ Return ONLY a JSON object with the fields you can extract:
       const aiParsed = JSON.parse(text);
       console.log('AI parsed response:', aiParsed);
 
-      // Merge direct match with AI results
-      const result = { ...directMatch };
+      // Merge pre-AI matches (learned + direct) with AI results
+      const result = { ...preAiMatches };
 
       // Process AI results, matching to actual available options
       if (aiParsed.color && !result.color) {
@@ -241,6 +274,13 @@ Return ONLY a JSON object with the fields you can extract:
           // Also set partId if we can find it
           const part = availableOptions?.colors?.find(c => c.name === matchedColor);
           if (part) result.partId = part.partId;
+          // Learn this match
+          addExample({
+            type: 'color',
+            userInput: userInput,
+            matchedValue: matchedColor,
+            confidence: 0.6,
+          });
         }
       }
 
@@ -251,11 +291,29 @@ Return ONLY a JSON object with the fields you can extract:
       if (aiParsed.decorationMethod && !result.decorationMethod) {
         const matchedMethod = findSynonymMatch(aiParsed.decorationMethod, methodOptions);
         result.decorationMethod = matchedMethod || aiParsed.decorationMethod;
+        // Learn this match
+        if (result.decorationMethod) {
+          addExample({
+            type: 'decoration',
+            userInput: userInput,
+            matchedValue: result.decorationMethod,
+            confidence: 0.6,
+          });
+        }
       }
 
       if (aiParsed.decorationLocation && !result.decorationLocation) {
         const matchedLocation = findSynonymMatch(aiParsed.decorationLocation, locationOptions);
         result.decorationLocation = matchedLocation || aiParsed.decorationLocation;
+        // Learn this match
+        if (result.decorationLocation) {
+          addExample({
+            type: 'location',
+            userInput: userInput,
+            matchedValue: result.decorationLocation,
+            confidence: 0.6,
+          });
+        }
       }
 
       if (aiParsed.decorationColors && !result.decorationColors) {
@@ -268,7 +326,7 @@ Return ONLY a JSON object with the fields you can extract:
     console.error('AI parsing error:', e);
   }
 
-  return directMatch;
+  return preAiMatches;
 }
 
 // Try to match user input directly without AI for common patterns

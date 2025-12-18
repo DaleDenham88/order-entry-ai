@@ -30,6 +30,8 @@ export default function OrderEntryPage() {
   const [productInfo, setProductInfo] = useState<ProductInfo | null>(null);
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const [quantityInput, setQuantityInput] = useState<string>('');
+  const [feedbackGiven, setFeedbackGiven] = useState<boolean>(false);
+  const [lastUserInput, setLastUserInput] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const debugEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +62,8 @@ export default function OrderEntryPage() {
 
     const userMessage = input.trim();
     setInput('');
+    setLastUserInput(userMessage);
+    setFeedbackGiven(false);
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
@@ -183,6 +187,8 @@ export default function OrderEntryPage() {
     setRequiredFields(null);
     setProductInfo(null);
     setDebugLogs([]);
+    setFeedbackGiven(false);
+    setLastUserInput('');
     setMessages([
       {
         role: 'assistant',
@@ -191,7 +197,38 @@ export default function OrderEntryPage() {
     ]);
   };
 
+  const handleFeedback = async (wasCorrect: boolean, correction?: { field: string; wrongValue: any; correctValue: any }) => {
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'feedback',
+          data: {
+            wasCorrect,
+            userInput: lastUserInput,
+            selections: conversationState?.selectedOptions || {},
+            correction,
+          },
+        }),
+      });
+      setFeedbackGiven(true);
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: wasCorrect
+            ? 'Thanks for the feedback! This helps me learn.'
+            : 'Thanks for the correction! I\'ll remember this for next time.',
+        },
+      ]);
+    } catch (error) {
+      console.error('Feedback error:', error);
+    }
+  };
+
   const showOptionsPanel = availableOptions && !conversationState?.lineItem;
+  const showFeedback = conversationState?.lineItem && !feedbackGiven;
 
   return (
     <div style={styles.container}>
@@ -277,6 +314,29 @@ export default function OrderEntryPage() {
                 </div>
               </div>
             ))}
+            {/* Feedback Section */}
+            {showFeedback && (
+              <div style={styles.feedbackContainer}>
+                <div style={styles.feedbackTitle}>Was this order correct?</div>
+                <div style={styles.feedbackButtons}>
+                  <button
+                    onClick={() => handleFeedback(true)}
+                    style={styles.feedbackButtonYes}
+                  >
+                    Yes, looks good!
+                  </button>
+                  <button
+                    onClick={() => handleFeedback(false)}
+                    style={styles.feedbackButtonNo}
+                  >
+                    No, needs correction
+                  </button>
+                </div>
+                <div style={styles.feedbackHint}>
+                  Your feedback helps improve future responses
+                </div>
+              </div>
+            )}
             {loading && (
               <div style={{ ...styles.messageRow, justifyContent: 'flex-start' }}>
                 <div style={{ ...styles.messageBubble, ...styles.assistantMessage }}>
@@ -1136,5 +1196,53 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#4ade80',
     fontSize: '16px',
     fontFamily: 'monospace',
+  },
+  // Feedback styles
+  feedbackContainer: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    padding: '16px',
+    margin: '12px 0',
+    backgroundColor: '#f0fdf4',
+    borderRadius: '12px',
+    border: '1px solid #86efac',
+  },
+  feedbackTitle: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#166534',
+    marginBottom: '12px',
+  },
+  feedbackButtons: {
+    display: 'flex',
+    gap: '12px',
+  },
+  feedbackButtonYes: {
+    padding: '8px 20px',
+    backgroundColor: '#22c55e',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 500,
+    transition: 'background-color 0.2s',
+  },
+  feedbackButtonNo: {
+    padding: '8px 20px',
+    backgroundColor: 'white',
+    color: '#dc2626',
+    border: '1px solid #dc2626',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 500,
+    transition: 'all 0.2s',
+  },
+  feedbackHint: {
+    fontSize: '11px',
+    color: '#6b7280',
+    marginTop: '8px',
   },
 };

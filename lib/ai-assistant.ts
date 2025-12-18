@@ -380,15 +380,22 @@ export function buildLineItem(
   
   // Add decoration charges if decoration method is specified
   if (decorationMethod && decorationLocation) {
-    const location = pricingData.locations.find(l => 
+    const location = pricingData.locations.find(l =>
       l.locationName.toLowerCase() === decorationLocation.toLowerCase() ||
       l.locationId === decorationLocation
     );
-    
+
+    console.log('Looking for location:', decorationLocation, 'Found:', location?.locationName);
+
     if (location) {
-      const decoration = location.decorations.find(d => 
-        d.decorationName.toLowerCase().includes(decorationMethod.toLowerCase())
+      const decoration = location.decorations.find(d =>
+        d.decorationName.toLowerCase() === decorationMethod.toLowerCase() ||
+        d.decorationName.toLowerCase().includes(decorationMethod.toLowerCase()) ||
+        decorationMethod.toLowerCase().includes(d.decorationName.toLowerCase())
       );
+
+      console.log('Looking for decoration method:', decorationMethod, 'Found:', decoration?.decorationName);
+      console.log('Decoration has charges:', decoration?.charges?.length || 0);
       
       if (decoration) {
         // Add setup charges

@@ -31,10 +31,18 @@ export default function OrderEntryPage() {
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const debugEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-focus input when loading completes
+  useEffect(() => {
+    if (!loading) {
+      inputRef.current?.focus();
+    }
+  }, [loading]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -260,11 +268,13 @@ export default function OrderEntryPage() {
           {/* Input Form */}
           <form onSubmit={handleSubmit} style={styles.inputForm}>
             <input
+              ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Enter your order (e.g., '500 of product 55900')..."
               disabled={loading}
+              autoFocus
               style={styles.input}
             />
             <button
@@ -429,61 +439,73 @@ function OptionSection<T>({
 function LineItemDisplay({ lineItem }: { lineItem: OrderLineItem }) {
   return (
     <div style={styles.lineItem}>
-      <div style={styles.lineItemHeader}>
-        <span style={styles.lineItemTitle}>{lineItem.productName}</span>
-        <span style={styles.lineItemPartId}>{lineItem.partId}</span>
+      {/* PO-style header */}
+      <div style={styles.poHeader}>
+        <div style={styles.poTitle}>ORDER LINE ITEM</div>
       </div>
-      <div style={styles.lineItemDesc}>{lineItem.description}</div>
 
-      <table style={styles.lineItemTable}>
+      {/* Main line item table - horizontal PO format */}
+      <table style={styles.poTable}>
+        <thead>
+          <tr style={styles.poTableHeader}>
+            <th style={styles.poTh}>Item</th>
+            <th style={styles.poTh}>Description</th>
+            <th style={styles.poThCenter}>Qty</th>
+            <th style={styles.poThRight}>Unit Price</th>
+            <th style={styles.poThRight}>Extended</th>
+          </tr>
+        </thead>
         <tbody>
-          <tr>
-            <td style={styles.lineItemLabel}>Quantity</td>
-            <td style={styles.lineItemValue}>{lineItem.quantity}</td>
+          {/* Product row */}
+          <tr style={styles.poTableRow}>
+            <td style={styles.poTd}>
+              <div style={styles.poItemId}>{lineItem.partId}</div>
+            </td>
+            <td style={styles.poTd}>
+              <div style={styles.poProductName}>{lineItem.productName}</div>
+              <div style={styles.poProductDesc}>{lineItem.description}</div>
+            </td>
+            <td style={styles.poTdCenter}>{lineItem.quantity.toLocaleString()}</td>
+            <td style={styles.poTdRight}>${lineItem.unitPrice.toFixed(4)}</td>
+            <td style={styles.poTdRight}>${lineItem.extendedPrice.toFixed(2)}</td>
           </tr>
-          <tr>
-            <td style={styles.lineItemLabel}>Unit Price</td>
-            <td style={styles.lineItemValue}>${lineItem.unitPrice.toFixed(2)}</td>
-          </tr>
-          <tr style={styles.lineItemSubtotal}>
-            <td style={styles.lineItemLabel}>Product Subtotal</td>
-            <td style={styles.lineItemValue}>${lineItem.extendedPrice.toFixed(2)}</td>
-          </tr>
+
+          {/* Decoration info row */}
+          {lineItem.decorationMethod && (
+            <tr style={styles.poDecorationRow}>
+              <td style={styles.poTd}></td>
+              <td style={styles.poTd} colSpan={4}>
+                <div style={styles.poDecoration}>
+                  <strong>Imprint:</strong> {lineItem.decorationMethod} @ {lineItem.decorationLocation}
+                  {lineItem.decorationColors && (
+                    <span> • {lineItem.decorationColors} color{lineItem.decorationColors > 1 ? 's' : ''}</span>
+                  )}
+                </div>
+              </td>
+            </tr>
+          )}
+
+          {/* Charge rows */}
+          {lineItem.charges.map((charge, idx) => (
+            <tr key={idx} style={styles.poChargeRow}>
+              <td style={styles.poTd}></td>
+              <td style={styles.poTd}>
+                <div style={styles.poChargeName}>{charge.name}</div>
+                <div style={styles.poChargeDesc}>{charge.description}</div>
+              </td>
+              <td style={styles.poTdCenter}>{charge.quantity > 1 ? charge.quantity.toLocaleString() : '—'}</td>
+              <td style={styles.poTdRight}>{charge.quantity > 1 ? `$${charge.unitPrice.toFixed(4)}` : '—'}</td>
+              <td style={styles.poTdRight}>${charge.extendedPrice.toFixed(2)}</td>
+            </tr>
+          ))}
         </tbody>
+        <tfoot>
+          <tr style={styles.poTotalRow}>
+            <td colSpan={4} style={styles.poTotalLabel}>ORDER TOTAL</td>
+            <td style={styles.poTotalValue}>${lineItem.totalWithCharges.toFixed(2)}</td>
+          </tr>
+        </tfoot>
       </table>
-
-      {lineItem.decorationMethod && (
-        <div style={styles.decorationInfo}>
-          <div style={styles.decorationTitle}>Decoration</div>
-          <div style={styles.decorationDetails}>
-            {lineItem.decorationMethod} @ {lineItem.decorationLocation}
-            {lineItem.decorationColors && lineItem.decorationColors > 1 && (
-              <span> ({lineItem.decorationColors} colors)</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {lineItem.charges.length > 0 && (
-        <div style={styles.chargesSection}>
-          <div style={styles.chargesTitle}>Decoration Charges</div>
-          <table style={styles.lineItemTable}>
-            <tbody>
-              {lineItem.charges.map((charge, idx) => (
-                <tr key={idx}>
-                  <td style={styles.lineItemLabel}>{charge.name}</td>
-                  <td style={styles.lineItemValue}>${charge.extendedPrice.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div style={styles.totalSection}>
-        <span style={styles.totalLabel}>TOTAL</span>
-        <span style={styles.totalValue}>${lineItem.totalWithCharges.toFixed(2)}</span>
-      </div>
     </div>
   );
 }
@@ -913,5 +935,129 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '18px',
     fontWeight: 700,
     color: '#1e293b',
+  },
+  // PO-style line item styles
+  poHeader: {
+    backgroundColor: '#1e293b',
+    padding: '8px 12px',
+    borderRadius: '6px 6px 0 0',
+    marginBottom: 0,
+  },
+  poTitle: {
+    color: 'white',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '1px',
+  },
+  poTable: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '13px',
+  },
+  poTableHeader: {
+    backgroundColor: '#f1f5f9',
+  },
+  poTh: {
+    padding: '8px 10px',
+    textAlign: 'left' as const,
+    fontWeight: 600,
+    color: '#475569',
+    fontSize: '11px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    borderBottom: '2px solid #e2e8f0',
+  },
+  poThCenter: {
+    padding: '8px 10px',
+    textAlign: 'center' as const,
+    fontWeight: 600,
+    color: '#475569',
+    fontSize: '11px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    borderBottom: '2px solid #e2e8f0',
+  },
+  poThRight: {
+    padding: '8px 10px',
+    textAlign: 'right' as const,
+    fontWeight: 600,
+    color: '#475569',
+    fontSize: '11px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    borderBottom: '2px solid #e2e8f0',
+  },
+  poTableRow: {
+    borderBottom: '1px solid #e2e8f0',
+  },
+  poTd: {
+    padding: '10px',
+    verticalAlign: 'top' as const,
+  },
+  poTdCenter: {
+    padding: '10px',
+    textAlign: 'center' as const,
+    verticalAlign: 'top' as const,
+  },
+  poTdRight: {
+    padding: '10px',
+    textAlign: 'right' as const,
+    verticalAlign: 'top' as const,
+    fontFamily: 'monospace',
+  },
+  poItemId: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#3b82f6',
+    fontFamily: 'monospace',
+  },
+  poProductName: {
+    fontWeight: 600,
+    color: '#1e293b',
+    marginBottom: '2px',
+  },
+  poProductDesc: {
+    fontSize: '12px',
+    color: '#64748b',
+  },
+  poDecorationRow: {
+    backgroundColor: '#f8fafc',
+    borderBottom: '1px solid #e2e8f0',
+  },
+  poDecoration: {
+    fontSize: '12px',
+    color: '#475569',
+    padding: '4px 0',
+  },
+  poChargeRow: {
+    backgroundColor: '#fffbeb',
+    borderBottom: '1px solid #fde68a',
+  },
+  poChargeName: {
+    fontWeight: 500,
+    color: '#92400e',
+  },
+  poChargeDesc: {
+    fontSize: '11px',
+    color: '#a16207',
+  },
+  poTotalRow: {
+    backgroundColor: '#1e293b',
+  },
+  poTotalLabel: {
+    padding: '12px 10px',
+    textAlign: 'right' as const,
+    fontWeight: 700,
+    color: 'white',
+    fontSize: '13px',
+    letterSpacing: '0.5px',
+  },
+  poTotalValue: {
+    padding: '12px 10px',
+    textAlign: 'right' as const,
+    fontWeight: 700,
+    color: '#4ade80',
+    fontSize: '16px',
+    fontFamily: 'monospace',
   },
 };

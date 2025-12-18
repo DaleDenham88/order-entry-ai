@@ -18,6 +18,41 @@ const HIT_ENDPOINTS = {
   ppc: "https://ppds.hitpromo.net/PPC?ws=1",
 };
 
+// Get FOB points for a product (required before getting configuration)
+export async function getFobPoints(productId: string): Promise<string | null> {
+  const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <GetFobPointsRequest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/">
+      <wsVersion xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">1.0.0</wsVersion>
+      <id xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${HIT_CREDENTIALS.username}</id>
+      <password xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${HIT_CREDENTIALS.password}</password>
+      <productId xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${productId}</productId>
+      <localizationCountry xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">US</localizationCountry>
+      <localizationLanguage xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">en</localizationLanguage>
+    </GetFobPointsRequest>
+  </soap:Body>
+</soap:Envelope>`;
+
+  const response = await fetch(HIT_ENDPOINTS.ppc, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      SOAPAction: "getFobPoints",
+    },
+    body: soapEnvelope,
+  });
+
+  const xmlText = await response.text();
+  console.log('FOB Response:', xmlText.substring(0, 500));
+
+  // Extract fobId from response
+  const fobId = extractValue(xmlText, "fobId");
+  console.log('Extracted FOB ID:', fobId);
+
+  return fobId || null;
+}
+
 // Simple XML parser helpers
 function extractValue(xml: string, tag: string): string | undefined {
   const regex = new RegExp(`<[^:]*:${tag}[^>]*>([^<]*)<`, "i");
@@ -41,17 +76,36 @@ function extractAllBlocks(xml: string, tag: string): string[] {
 export async function getConfigurationAndPricing(
   productId: string
 ): Promise<PricingConfiguration> {
-  const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
-               xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/">
+  // First, get FOB points for this product
+  const fobId = await getFobPoints(productId);
+  console.log('Using FOB ID:', fobId);
+
+  if (!fobId) {
+    console.error('No FOB ID found for product:', productId);
+    // Return empty configuration if no FOB found
+    return {
+      productId,
+      currency: "USD",
+      parts: [],
+      locations: [],
+    };
+  }
+
+  const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
-    <ns:GetConfigurationAndPricingRequest>
-      <ns:wsVersion>1.0.0</ns:wsVersion>
-      <ns:id>${HIT_CREDENTIALS.username}</ns:id>
-      <ns:password>${HIT_CREDENTIALS.password}</ns:password>
-      <ns:productId>${productId}</ns:productId>
-      <ns:currency>USD</ns:currency>
-    </ns:GetConfigurationAndPricingRequest>
+    <GetConfigurationAndPricingRequest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/">
+      <wsVersion xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">1.0.0</wsVersion>
+      <id xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${HIT_CREDENTIALS.username}</id>
+      <password xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${HIT_CREDENTIALS.password}</password>
+      <productId xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${productId}</productId>
+      <currency xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">USD</currency>
+      <fobId xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">${fobId}</fobId>
+      <priceType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">Net</priceType>
+      <localizationCountry xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">US</localizationCountry>
+      <localizationLanguage xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">en</localizationLanguage>
+      <configurationType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">Decorated</configurationType>
+    </GetConfigurationAndPricingRequest>
   </soap:Body>
 </soap:Envelope>`;
 

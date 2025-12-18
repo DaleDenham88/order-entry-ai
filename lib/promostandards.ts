@@ -16,7 +16,7 @@ const HIT_CREDENTIALS = {
 
 const HIT_ENDPOINTS = {
   productData: "https://ppds.hitpromo.net/productData?ws=1",
-  ppc: "https://ppds.hitpromo.net/PPC/?ws=1",  // Added trailing slash
+  ppc: "https://ppds.hitpromo.net/PPC?ws=1",
 };
 
 // Global debug logs array - reset per request
@@ -63,12 +63,13 @@ export async function getFobPoints(productId: string): Promise<string | null> {
       method: "POST",
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
-        "Accept": "text/xml",
+        "SOAPAction": "getFobPoints",
       },
       body: soapEnvelope,
+      redirect: "follow",
     });
 
-    addDebugLog('GetFobPoints Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
+    addDebugLog('GetFobPoints Fetch Status', undefined, `Status: ${response.status} ${response.statusText}\nFinal URL: ${response.url}`);
 
     const xmlText = await response.text();
 
@@ -183,12 +184,13 @@ export async function getConfigurationAndPricing(
       method: "POST",
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
-        "Accept": "text/xml",
+        "SOAPAction": "getConfigurationAndPricing",
       },
       body: soapEnvelope,
+      redirect: "follow",
     });
 
-    addDebugLog('GetConfigurationAndPricing Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
+    addDebugLog('GetConfigurationAndPricing Fetch Status', undefined, `Status: ${response.status} ${response.statusText}\nFinal URL: ${response.url}`);
 
     const xmlText = await response.text();
     const result = parseConfigurationResponse(xmlText, productId);

@@ -412,6 +412,13 @@ function autoSelectSingleOptions(state: ConversationState, pricingData: PricingC
     state.selectedOptions.decorationLocation = pricingData.locations[0].locationName;
     console.log('Auto-selected single location:', pricingData.locations[0].locationName);
   }
+
+  // Auto-select decoration colors if max is 1
+  const maxColors = getMaxDecorationColors(pricingData);
+  if (!state.selectedOptions.decorationColors && maxColors === 1) {
+    state.selectedOptions.decorationColors = 1;
+    console.log('Auto-selected single imprint color');
+  }
 }
 
 // Get unique decoration methods across all locations

@@ -343,30 +343,34 @@ export default function OrderEntryPage() {
               />
 
               {/* Decoration Colors Section */}
-              {availableOptions.decorationColors.max > 1 && (
-                <div style={styles.optionSection}>
-                  <div style={styles.optionSectionHeader}>
-                    <span style={styles.optionSectionTitle}>Imprint Colors</span>
+              <div style={styles.optionSection}>
+                <div style={styles.optionSectionHeader}>
+                  <span style={styles.optionSectionTitle}>Imprint Colors</span>
+                  {requiredFields?.decorationColors && !availableOptions.decorationColors.selected ? (
+                    <span style={styles.requiredBadge}>Required</span>
+                  ) : availableOptions.decorationColors.selected ? (
+                    <span style={styles.selectedBadge}>✓</span>
+                  ) : (
                     <span style={styles.optionalBadge}>Optional</span>
-                  </div>
-                  <div style={styles.colorCountSelector}>
-                    {Array.from({ length: availableOptions.decorationColors.max }, (_, i) => i + 1).map(num => (
-                      <button
-                        key={num}
-                        onClick={() => handleOptionSelect('decorationColors', num)}
-                        disabled={loading}
-                        style={{
-                          ...styles.colorCountButton,
-                          ...(availableOptions.decorationColors.selected === num ? styles.colorCountButtonSelected : {}),
-                          ...(loading ? styles.optionButtonDisabled : {}),
-                        }}
-                      >
-                        {num}
-                      </button>
-                    ))}
-                  </div>
+                  )}
                 </div>
-              )}
+                <div style={styles.colorCountSelector}>
+                  {Array.from({ length: availableOptions.decorationColors.max }, (_, i) => i + 1).map(num => (
+                    <button
+                      key={num}
+                      onClick={() => handleOptionSelect('decorationColors', num)}
+                      disabled={loading}
+                      style={{
+                        ...styles.colorCountButton,
+                        ...(availableOptions.decorationColors.selected === num ? styles.colorCountButtonSelected : {}),
+                        ...(loading ? styles.optionButtonDisabled : {}),
+                      }}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}

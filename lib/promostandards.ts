@@ -70,12 +70,17 @@ export async function getFobPoints(productId: string): Promise<string | null> {
 
     const xmlText = await response.text();
 
-    // Extract fobId from response
-    const fobId = extractValue(xmlText, "fobId");
+    // Find the fobId for this specific product
+    const fobId = findFobIdForProduct(xmlText, productId);
 
-    addDebugLog('GetFobPoints Response', undefined, xmlText, fobId ? undefined : 'No fobId found in response');
+    addDebugLog(
+      'GetFobPoints Response',
+      undefined,
+      xmlText,
+      fobId ? `Found fobId: ${fobId}` : 'No fobId found for this product'
+    );
 
-    return fobId || null;
+    return fobId;
   } catch (error) {
     addDebugLog('GetFobPoints Error', undefined, undefined, String(error));
     return null;
@@ -84,9 +89,40 @@ export async function getFobPoints(productId: string): Promise<string | null> {
 
 // Simple XML parser helpers
 function extractValue(xml: string, tag: string): string | undefined {
-  const regex = new RegExp(`<[^:]*:${tag}[^>]*>([^<]*)<`, "i");
-  const match = xml.match(regex);
+  // Try with namespace prefix first (ns1:tag, ns2:tag, etc.)
+  let regex = new RegExp(`<[^>]*:${tag}[^>]*>([^<]*)<`, "i");
+  let match = xml.match(regex);
+  if (match) return match[1].trim();
+
+  // Try without namespace prefix
+  regex = new RegExp(`<${tag}[^>]*>([^<]*)<`, "i");
+  match = xml.match(regex);
   return match ? match[1].trim() : undefined;
+}
+
+// Find FOB ID for a specific product from the FobPointArray
+function findFobIdForProduct(xml: string, productId: string): string | null {
+  // Extract all FobPoint blocks
+  const fobPointRegex = /<[^>]*:FobPoint[^>]*>([\s\S]*?)<\/[^>]*:FobPoint>/gi;
+  let match;
+
+  while ((match = fobPointRegex.exec(xml)) !== null) {
+    const fobPointBlock = match[1];
+
+    // Check if this FobPoint contains our productId
+    const productIdRegex = new RegExp(`<[^>]*:productId[^>]*>${productId}<`, "i");
+    if (productIdRegex.test(fobPointBlock)) {
+      // Found the right FobPoint, extract fobId
+      const fobIdMatch = fobPointBlock.match(/<[^>]*:fobId[^>]*>([^<]*)</i);
+      if (fobIdMatch) {
+        return fobIdMatch[1].trim();
+      }
+    }
+  }
+
+  // If no specific match, just return the first fobId found
+  const firstFobId = xml.match(/<[^>]*:fobId[^>]*>([^<]*)</i);
+  return firstFobId ? firstFobId[1].trim() : null;
 }
 
 function extractAllBlocks(xml: string, tag: string): string[] {

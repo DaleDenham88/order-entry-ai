@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { ConversationState, OrderLineItem } from '@/types';
+import { ConversationState, OrderLineItem, AvailableOptions, RequiredFields } from '@/types';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -9,16 +9,25 @@ interface Message {
   lineItem?: OrderLineItem;
 }
 
-export default function OrderEntryAssistant() {
+interface ProductInfo {
+  productId: string;
+  productName: string;
+  quantity: number;
+}
+
+export default function OrderEntryPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Hi! I'm your AI order entry assistant. Tell me what you need and I'll help you build a complete line item. For example:\n\n\"I need 500 of product 5790 in black with a one-color imprint\"\n\n\"Get me pricing on 250 tumblers from HIT, product 16103\"",
+      content: 'Welcome! Enter your order request to get started.\n\nExample: "500 of product 55900"',
     },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationState, setConversationState] = useState<ConversationState | null>(null);
+  const [availableOptions, setAvailableOptions] = useState<AvailableOptions | null>(null);
+  const [requiredFields, setRequiredFields] = useState<RequiredFields | null>(null);
+  const [productInfo, setProductInfo] = useState<ProductInfo | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,7 +40,7 @@ export default function OrderEntryAssistant() {
 
     const userMessage = input.trim();
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
     try {
@@ -48,7 +57,10 @@ export default function OrderEntryAssistant() {
 
       if (data.success) {
         setConversationState(data.state);
-        setMessages((prev) => [
+        setAvailableOptions(data.availableOptions || null);
+        setRequiredFields(data.requiredFields || null);
+        setProductInfo(data.productInfo || null);
+        setMessages(prev => [
           ...prev,
           {
             role: 'assistant',
@@ -57,16 +69,16 @@ export default function OrderEntryAssistant() {
           },
         ]);
       } else {
-        setMessages((prev) => [
+        setMessages(prev => [
           ...prev,
           {
             role: 'assistant',
-            content: data.error || 'Sorry, something went wrong. Please try again.',
+            content: data.error || 'Something went wrong. Please try again.',
           },
         ]);
       }
     } catch (error) {
-      setMessages((prev) => [
+      setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
@@ -78,475 +90,676 @@ export default function OrderEntryAssistant() {
     }
   };
 
+  const handleOptionSelect = async (field: string, value: string | number) => {
+    if (!conversationState || loading) return;
+
+    setLoading(true);
+
+    try {
+      const response = await fetch('/api/process-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userInput: '',
+          currentState: conversationState,
+          selectionUpdate: { field, value },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setConversationState(data.state);
+        setAvailableOptions(data.availableOptions || null);
+        setRequiredFields(data.requiredFields || null);
+        setProductInfo(data.productInfo || null);
+
+        if (data.state.lineItem) {
+          setMessages(prev => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: data.message,
+              lineItem: data.state.lineItem,
+            },
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error('Selection error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleReset = () => {
     setConversationState(null);
+    setAvailableOptions(null);
+    setRequiredFields(null);
+    setProductInfo(null);
     setMessages([
       {
         role: 'assistant',
-        content: "Starting fresh! What would you like to order?",
+        content: 'Starting fresh! What would you like to order?',
       },
     ]);
   };
 
-  const handleQuickOption = (option: string) => {
-    setInput(option);
-  };
+  const showOptionsPanel = availableOptions && !conversationState?.lineItem;
 
   return (
-    <div className="app-container">
-      <header className="app-header">
-        <div className="header-content">
-          <h1>AI Order Entry Assistant</h1>
-          <p>Natural language to line item in seconds</p>
+    <div style={styles.container}>
+      {/* Header */}
+      <header style={styles.header}>
+        <div>
+          <h1 style={styles.title}>Order Entry</h1>
+          <p style={styles.subtitle}>AI-powered order processing</p>
         </div>
-        <button onClick={handleReset} className="reset-btn">
+        <button onClick={handleReset} style={styles.resetButton}>
           New Order
         </button>
       </header>
 
-      <main className="chat-container">
-        <div className="messages">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`message ${msg.role}`}>
-              <div className="message-content">
-                {msg.content.split('\n').map((line, i) => (
-                  <p key={i}>{line || <br />}</p>
-                ))}
-                {msg.lineItem && <LineItemCard lineItem={msg.lineItem} />}
+      {/* Main Content */}
+      <div style={styles.mainContent}>
+        {/* Chat Area */}
+        <div style={{ ...styles.chatArea, flex: showOptionsPanel ? '1 1 60%' : '1 1 100%' }}>
+          <div style={styles.messagesContainer}>
+            {messages.map((msg, idx) => (
+              <div
+                key={idx}
+                style={{
+                  ...styles.messageRow,
+                  justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                }}
+              >
+                <div
+                  style={{
+                    ...styles.messageBubble,
+                    ...(msg.role === 'user' ? styles.userMessage : styles.assistantMessage),
+                  }}
+                >
+                  {msg.content}
+                  {msg.lineItem && (
+                    <div style={styles.lineItemContainer}>
+                      <LineItemDisplay lineItem={msg.lineItem} />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="message assistant">
-              <div className="message-content loading">
-                <span className="dot"></span>
-                <span className="dot"></span>
-                <span className="dot"></span>
+            ))}
+            {loading && (
+              <div style={{ ...styles.messageRow, justifyContent: 'flex-start' }}>
+                <div style={{ ...styles.messageBubble, ...styles.assistantMessage }}>
+                  <div style={styles.loadingDots}>
+                    <span style={styles.dot}>●</span>
+                    <span style={{ ...styles.dot, animationDelay: '0.2s' }}>●</span>
+                    <span style={{ ...styles.dot, animationDelay: '0.4s' }}>●</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Form */}
+          <form onSubmit={handleSubmit} style={styles.inputForm}>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Enter your order (e.g., '500 of product 55900')..."
+              disabled={loading}
+              style={styles.input}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              style={{
+                ...styles.sendButton,
+                ...(loading || !input.trim() ? styles.sendButtonDisabled : {}),
+              }}
+            >
+              Send
+            </button>
+          </form>
         </div>
 
-        {conversationState?.questions && conversationState.questions.length > 0 && (
-          <div className="quick-options">
-            {conversationState.questions[0].options?.slice(0, 6).map((opt, idx) => (
-              <button key={idx} onClick={() => handleQuickOption(opt)} className="quick-option">
-                {opt}
-              </button>
-            ))}
+        {/* Options Panel */}
+        {showOptionsPanel && (
+          <div style={styles.optionsPanel}>
+            <div style={styles.optionsPanelHeader}>
+              <h2 style={styles.optionsPanelTitle}>Order Options</h2>
+              {productInfo && (
+                <div style={styles.productInfoBox}>
+                  <div style={styles.productName}>{productInfo.productName}</div>
+                  <div style={styles.productDetails}>
+                    Product #{productInfo.productId} • Qty: {productInfo.quantity}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={styles.optionsContent}>
+              {/* Colors Section */}
+              <OptionSection
+                title="Color"
+                required={requiredFields?.color}
+                options={availableOptions.colors}
+                onSelect={(opt) => handleOptionSelect('partId', opt.partId)}
+                getLabel={(opt) => opt.name}
+                getKey={(opt) => opt.partId}
+                isSelected={(opt) => opt.selected}
+                disabled={loading}
+              />
+
+              {/* Decoration Methods Section */}
+              <OptionSection
+                title="Decoration Method"
+                required={requiredFields?.decorationMethod}
+                options={availableOptions.decorationMethods}
+                onSelect={(opt) => handleOptionSelect('decorationMethod', opt.name)}
+                getLabel={(opt) => opt.name}
+                getKey={(opt) => opt.id}
+                isSelected={(opt) => opt.selected}
+                disabled={loading}
+              />
+
+              {/* Decoration Locations Section */}
+              <OptionSection
+                title="Location"
+                required={requiredFields?.decorationLocation}
+                options={availableOptions.decorationLocations}
+                onSelect={(opt) => handleOptionSelect('decorationLocation', opt.name)}
+                getLabel={(opt) => opt.name}
+                getKey={(opt) => opt.id}
+                isSelected={(opt) => opt.selected}
+                disabled={loading}
+              />
+
+              {/* Decoration Colors Section */}
+              {availableOptions.decorationColors.max > 1 && (
+                <div style={styles.optionSection}>
+                  <div style={styles.optionSectionHeader}>
+                    <span style={styles.optionSectionTitle}>Imprint Colors</span>
+                    <span style={styles.optionalBadge}>Optional</span>
+                  </div>
+                  <div style={styles.colorCountSelector}>
+                    {Array.from({ length: availableOptions.decorationColors.max }, (_, i) => i + 1).map(num => (
+                      <button
+                        key={num}
+                        onClick={() => handleOptionSelect('decorationColors', num)}
+                        disabled={loading}
+                        style={{
+                          ...styles.colorCountButton,
+                          ...(availableOptions.decorationColors.selected === num ? styles.colorCountButtonSelected : {}),
+                          ...(loading ? styles.optionButtonDisabled : {}),
+                        }}
+                      >
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
-
-        <form onSubmit={handleSubmit} className="input-form">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              conversationState?.questions?.[0]?.question || 
-              "Describe your order... (e.g., '500 black tumblers, product 5790')"
-            }
-            disabled={loading}
-          />
-          <button type="submit" disabled={loading || !input.trim()}>
-            {loading ? '...' : 'Send'}
-          </button>
-        </form>
-      </main>
-
-      <footer className="app-footer">
-        <p>Powered by PromoStandards + Claude AI | Demo for IPU</p>
-      </footer>
-
-      <style jsx>{`
-        .app-container {
-          min-height: 100vh;
-          display: flex;
-          flex-direction: column;
-          background: linear-gradient(135deg, #0a1628 0%, #1a365d 100%);
-          font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
-        }
-
-        .app-header {
-          background: rgba(255, 255, 255, 0.03);
-          backdrop-filter: blur(10px);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-          padding: 1rem 2rem;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .header-content h1 {
-          color: #fff;
-          font-size: 1.5rem;
-          font-weight: 600;
-          margin: 0;
-        }
-
-        .header-content p {
-          color: rgba(255, 255, 255, 0.6);
-          font-size: 0.875rem;
-          margin: 0.25rem 0 0;
-        }
-
-        .reset-btn {
-          background: rgba(59, 130, 246, 0.2);
-          border: 1px solid rgba(59, 130, 246, 0.4);
-          color: #60a5fa;
-          padding: 0.5rem 1rem;
-          border-radius: 8px;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .reset-btn:hover {
-          background: rgba(59, 130, 246, 0.3);
-          border-color: #60a5fa;
-        }
-
-        .chat-container {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          max-width: 900px;
-          width: 100%;
-          margin: 0 auto;
-          padding: 1rem;
-        }
-
-        .messages {
-          flex: 1;
-          overflow-y: auto;
-          padding: 1rem 0;
-        }
-
-        .message {
-          margin-bottom: 1rem;
-          display: flex;
-        }
-
-        .message.user {
-          justify-content: flex-end;
-        }
-
-        .message.assistant {
-          justify-content: flex-start;
-        }
-
-        .message-content {
-          max-width: 80%;
-          padding: 1rem 1.25rem;
-          border-radius: 16px;
-          line-height: 1.5;
-        }
-
-        .message.user .message-content {
-          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-          color: white;
-          border-bottom-right-radius: 4px;
-        }
-
-        .message.assistant .message-content {
-          background: rgba(255, 255, 255, 0.08);
-          color: rgba(255, 255, 255, 0.9);
-          border-bottom-left-radius: 4px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .message-content p {
-          margin: 0 0 0.5rem;
-        }
-
-        .message-content p:last-child {
-          margin-bottom: 0;
-        }
-
-        .loading {
-          display: flex;
-          gap: 4px;
-          padding: 1rem 1.5rem;
-        }
-
-        .dot {
-          width: 8px;
-          height: 8px;
-          background: rgba(255, 255, 255, 0.4);
-          border-radius: 50%;
-          animation: bounce 1.4s infinite ease-in-out both;
-        }
-
-        .dot:nth-child(1) { animation-delay: -0.32s; }
-        .dot:nth-child(2) { animation-delay: -0.16s; }
-
-        @keyframes bounce {
-          0%, 80%, 100% { transform: scale(0); }
-          40% { transform: scale(1); }
-        }
-
-        .quick-options {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.5rem;
-          padding: 0.75rem 0;
-        }
-
-        .quick-option {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          color: rgba(255, 255, 255, 0.8);
-          padding: 0.5rem 1rem;
-          border-radius: 20px;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .quick-option:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: rgba(255, 255, 255, 0.3);
-        }
-
-        .input-form {
-          display: flex;
-          gap: 0.75rem;
-          padding: 1rem 0;
-        }
-
-        .input-form input {
-          flex: 1;
-          background: rgba(255, 255, 255, 0.08);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          color: white;
-          padding: 1rem 1.25rem;
-          border-radius: 12px;
-          font-size: 1rem;
-          outline: none;
-          transition: all 0.2s;
-        }
-
-        .input-form input::placeholder {
-          color: rgba(255, 255, 255, 0.4);
-        }
-
-        .input-form input:focus {
-          border-color: #3b82f6;
-          background: rgba(255, 255, 255, 0.1);
-        }
-
-        .input-form button {
-          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-          border: none;
-          color: white;
-          padding: 1rem 2rem;
-          border-radius: 12px;
-          font-size: 1rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .input-form button:hover:not(:disabled) {
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-        }
-
-        .input-form button:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .app-footer {
-          text-align: center;
-          padding: 1rem;
-          color: rgba(255, 255, 255, 0.4);
-          font-size: 0.75rem;
-        }
-      `}</style>
+      </div>
     </div>
   );
 }
 
-function LineItemCard({ lineItem }: { lineItem: OrderLineItem }) {
+interface OptionSectionProps<T> {
+  title: string;
+  required?: boolean;
+  options: T[];
+  onSelect: (option: T) => void;
+  getLabel: (option: T) => string;
+  getKey: (option: T) => string;
+  isSelected: (option: T) => boolean;
+  disabled: boolean;
+}
+
+function OptionSection<T>({
+  title,
+  required,
+  options,
+  onSelect,
+  getLabel,
+  getKey,
+  isSelected,
+  disabled,
+}: OptionSectionProps<T>) {
+  const hasSelection = options.some(isSelected);
+
   return (
-    <div className="line-item-po">
-      <div className="po-header">
-        <h3>Line Item Summary</h3>
-        <span className="po-product">{lineItem.productId} - {lineItem.productName}</span>
+    <div style={styles.optionSection}>
+      <div style={styles.optionSectionHeader}>
+        <span style={styles.optionSectionTitle}>{title}</span>
+        {required && !hasSelection ? (
+          <span style={styles.requiredBadge}>Required</span>
+        ) : hasSelection ? (
+          <span style={styles.selectedBadge}>✓</span>
+        ) : (
+          <span style={styles.optionalBadge}>Optional</span>
+        )}
       </div>
-      
-      <table className="po-table">
-        <thead>
-          <tr>
-            <th>Qty</th>
-            <th>Item</th>
-            <th>Description</th>
-            <th className="right">Price</th>
-            <th className="right">Ext Price</th>
-          </tr>
-        </thead>
+      <div style={styles.optionButtons}>
+        {options.length === 0 ? (
+          <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>
+            No options available
+          </span>
+        ) : (
+          options.map(opt => (
+            <button
+              key={getKey(opt)}
+              onClick={() => onSelect(opt)}
+              disabled={disabled}
+              style={{
+                ...styles.optionButton,
+                ...(isSelected(opt) ? styles.optionButtonSelected : {}),
+                ...(disabled ? styles.optionButtonDisabled : {}),
+              }}
+            >
+              {getLabel(opt)}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LineItemDisplay({ lineItem }: { lineItem: OrderLineItem }) {
+  return (
+    <div style={styles.lineItem}>
+      <div style={styles.lineItemHeader}>
+        <span style={styles.lineItemTitle}>{lineItem.productName}</span>
+        <span style={styles.lineItemPartId}>{lineItem.partId}</span>
+      </div>
+      <div style={styles.lineItemDesc}>{lineItem.description}</div>
+
+      <table style={styles.lineItemTable}>
         <tbody>
-          {/* Main product line */}
-          <tr className="product-row">
-            <td>{lineItem.quantity}</td>
-            <td>{lineItem.partId}</td>
-            <td>
-              {lineItem.color}
-              {lineItem.size && ` / ${lineItem.size}`}
-            </td>
-            <td className="right">${lineItem.unitPrice.toFixed(2)}</td>
-            <td className="right">${lineItem.extendedPrice.toFixed(2)}</td>
+          <tr>
+            <td style={styles.lineItemLabel}>Quantity</td>
+            <td style={styles.lineItemValue}>{lineItem.quantity}</td>
           </tr>
-          
-          {/* Decoration charges */}
-          {lineItem.charges.map((charge, idx) => (
-            <tr key={idx} className="charge-row">
-              <td>{charge.quantity}</td>
-              <td>CHARGE</td>
-              <td>{charge.name}{charge.description && ` - ${charge.description}`}</td>
-              <td className="right">${charge.unitPrice.toFixed(2)}</td>
-              <td className="right">${charge.extendedPrice.toFixed(2)}</td>
-            </tr>
-          ))}
+          <tr>
+            <td style={styles.lineItemLabel}>Unit Price</td>
+            <td style={styles.lineItemValue}>${lineItem.unitPrice.toFixed(2)}</td>
+          </tr>
+          <tr style={styles.lineItemSubtotal}>
+            <td style={styles.lineItemLabel}>Product Subtotal</td>
+            <td style={styles.lineItemValue}>${lineItem.extendedPrice.toFixed(2)}</td>
+          </tr>
         </tbody>
-        <tfoot>
-          <tr className="subtotal-row">
-            <td colSpan={3}></td>
-            <td className="right">Product Subtotal:</td>
-            <td className="right">${lineItem.extendedPrice.toFixed(2)}</td>
-          </tr>
-          {lineItem.charges.length > 0 && (
-            <tr className="subtotal-row">
-              <td colSpan={3}></td>
-              <td className="right">Charges Subtotal:</td>
-              <td className="right">${lineItem.charges.reduce((sum, c) => sum + c.extendedPrice, 0).toFixed(2)}</td>
-            </tr>
-          )}
-          <tr className="total-row">
-            <td colSpan={3}></td>
-            <td className="right"><strong>Line Total:</strong></td>
-            <td className="right"><strong>${lineItem.totalWithCharges.toFixed(2)}</strong></td>
-          </tr>
-        </tfoot>
       </table>
-      
+
       {lineItem.decorationMethod && (
-        <div className="decoration-summary">
-          <strong>Decoration:</strong> {lineItem.decorationMethod}
-          {lineItem.decorationLocation && ` at ${lineItem.decorationLocation}`}
-          {lineItem.decorationColors && ` (${lineItem.decorationColors} color${lineItem.decorationColors > 1 ? 's' : ''})`}
+        <div style={styles.decorationInfo}>
+          <div style={styles.decorationTitle}>Decoration</div>
+          <div style={styles.decorationDetails}>
+            {lineItem.decorationMethod} @ {lineItem.decorationLocation}
+            {lineItem.decorationColors && lineItem.decorationColors > 1 && (
+              <span> ({lineItem.decorationColors} colors)</span>
+            )}
+          </div>
         </div>
       )}
-      
-      {lineItem.fobPoint && (
-        <div className="fob-info">Ships from: {lineItem.fobPoint}</div>
+
+      {lineItem.charges.length > 0 && (
+        <div style={styles.chargesSection}>
+          <div style={styles.chargesTitle}>Decoration Charges</div>
+          <table style={styles.lineItemTable}>
+            <tbody>
+              {lineItem.charges.map((charge, idx) => (
+                <tr key={idx}>
+                  <td style={styles.lineItemLabel}>{charge.name}</td>
+                  <td style={styles.lineItemValue}>${charge.extendedPrice.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      <style jsx>{`
-        .line-item-po {
-          background: rgba(255, 255, 255, 0.95);
-          border-radius: 8px;
-          padding: 1.25rem;
-          margin-top: 1rem;
-          color: #1a1a1a;
-        }
-
-        .po-header {
-          border-bottom: 2px solid #2563eb;
-          padding-bottom: 0.75rem;
-          margin-bottom: 1rem;
-        }
-
-        .po-header h3 {
-          color: #1a1a1a;
-          font-size: 0.875rem;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin: 0 0 0.25rem;
-        }
-
-        .po-product {
-          color: #2563eb;
-          font-size: 1rem;
-          font-weight: 600;
-        }
-
-        .po-table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 0.875rem;
-        }
-
-        .po-table th {
-          background: #f1f5f9;
-          padding: 0.625rem 0.75rem;
-          text-align: left;
-          font-weight: 600;
-          color: #475569;
-          border-bottom: 1px solid #e2e8f0;
-          font-size: 0.75rem;
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-        }
-
-        .po-table th.right,
-        .po-table td.right {
-          text-align: right;
-        }
-
-        .po-table td {
-          padding: 0.625rem 0.75rem;
-          border-bottom: 1px solid #e2e8f0;
-          color: #334155;
-        }
-
-        .product-row {
-          background: #fefce8;
-        }
-
-        .product-row td {
-          font-weight: 500;
-          color: #1a1a1a;
-        }
-
-        .charge-row td {
-          color: #64748b;
-          font-size: 0.8125rem;
-        }
-
-        .subtotal-row td {
-          border-bottom: none;
-          padding: 0.375rem 0.75rem;
-          color: #64748b;
-          font-size: 0.8125rem;
-        }
-
-        .total-row td {
-          border-top: 2px solid #2563eb;
-          padding: 0.75rem;
-          color: #1a1a1a;
-          font-size: 1rem;
-        }
-
-        .decoration-summary {
-          margin-top: 1rem;
-          padding: 0.75rem;
-          background: #f1f5f9;
-          border-radius: 4px;
-          font-size: 0.8125rem;
-          color: #475569;
-        }
-
-        .fob-info {
-          margin-top: 0.5rem;
-          font-size: 0.75rem;
-          color: #94a3b8;
-          font-style: italic;
-        }
-      `}</style>
+      <div style={styles.totalSection}>
+        <span style={styles.totalLabel}>TOTAL</span>
+        <span style={styles.totalValue}>${lineItem.totalWithCharges.toFixed(2)}</span>
+      </div>
     </div>
   );
 }
+
+const styles: { [key: string]: React.CSSProperties } = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100vh',
+    backgroundColor: '#f8fafc',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '16px 24px',
+    backgroundColor: '#1e293b',
+    color: 'white',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+  },
+  title: {
+    margin: 0,
+    fontSize: '20px',
+    fontWeight: 600,
+  },
+  subtitle: {
+    margin: '4px 0 0 0',
+    fontSize: '13px',
+    opacity: 0.8,
+  },
+  resetButton: {
+    padding: '8px 16px',
+    backgroundColor: 'transparent',
+    color: 'white',
+    border: '1px solid rgba(255,255,255,0.3)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'all 0.2s',
+  },
+  mainContent: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'hidden',
+  },
+  chatArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    borderRight: '1px solid #e2e8f0',
+  },
+  messagesContainer: {
+    flex: 1,
+    overflow: 'auto',
+    padding: '20px',
+  },
+  messageRow: {
+    display: 'flex',
+    marginBottom: '12px',
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    fontSize: '14px',
+    lineHeight: 1.5,
+    whiteSpace: 'pre-wrap',
+  },
+  userMessage: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    borderBottomRightRadius: '4px',
+  },
+  assistantMessage: {
+    backgroundColor: 'white',
+    color: '#1e293b',
+    borderBottomLeftRadius: '4px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+  },
+  loadingDots: {
+    display: 'flex',
+    gap: '4px',
+  },
+  dot: {
+    opacity: 0.4,
+    animation: 'pulse 1s infinite',
+  },
+  inputForm: {
+    display: 'flex',
+    gap: '8px',
+    padding: '16px 20px',
+    backgroundColor: 'white',
+    borderTop: '1px solid #e2e8f0',
+  },
+  input: {
+    flex: 1,
+    padding: '12px 16px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '14px',
+    outline: 'none',
+    transition: 'border-color 0.2s',
+  },
+  sendButton: {
+    padding: '12px 24px',
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 500,
+    transition: 'background-color 0.2s',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#94a3b8',
+    cursor: 'not-allowed',
+  },
+  optionsPanel: {
+    flex: '0 0 340px',
+    backgroundColor: 'white',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  optionsPanelHeader: {
+    padding: '16px 20px',
+    borderBottom: '1px solid #e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  optionsPanelTitle: {
+    margin: '0 0 12px 0',
+    fontSize: '16px',
+    fontWeight: 600,
+    color: '#1e293b',
+  },
+  productInfoBox: {
+    padding: '12px',
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    border: '1px solid #e2e8f0',
+  },
+  productName: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#1e293b',
+    marginBottom: '4px',
+  },
+  productDetails: {
+    fontSize: '12px',
+    color: '#64748b',
+  },
+  optionsContent: {
+    flex: 1,
+    overflow: 'auto',
+    padding: '16px 20px',
+  },
+  optionSection: {
+    marginBottom: '20px',
+  },
+  optionSectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '10px',
+  },
+  optionSectionTitle: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  requiredBadge: {
+    fontSize: '11px',
+    fontWeight: 500,
+    color: '#dc2626',
+    backgroundColor: '#fef2f2',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  selectedBadge: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#16a34a',
+    backgroundColor: '#f0fdf4',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  optionalBadge: {
+    fontSize: '11px',
+    color: '#64748b',
+  },
+  optionButtons: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+  },
+  optionButton: {
+    padding: '8px 14px',
+    backgroundColor: '#f8fafc',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'all 0.15s',
+  },
+  optionButtonSelected: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    borderColor: '#3b82f6',
+  },
+  optionButtonDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
+  },
+  colorCountSelector: {
+    display: 'flex',
+    gap: '8px',
+  },
+  colorCountButton: {
+    width: '40px',
+    height: '40px',
+    backgroundColor: '#f8fafc',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 500,
+    transition: 'all 0.15s',
+  },
+  colorCountButtonSelected: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    borderColor: '#3b82f6',
+  },
+  lineItemContainer: {
+    marginTop: '12px',
+  },
+  lineItem: {
+    backgroundColor: '#f8fafc',
+    borderRadius: '8px',
+    padding: '16px',
+    border: '1px solid #e2e8f0',
+  },
+  lineItemHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: '4px',
+  },
+  lineItemTitle: {
+    fontSize: '15px',
+    fontWeight: 600,
+    color: '#1e293b',
+  },
+  lineItemPartId: {
+    fontSize: '12px',
+    color: '#64748b',
+    backgroundColor: '#e2e8f0',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  lineItemDesc: {
+    fontSize: '12px',
+    color: '#64748b',
+    marginBottom: '12px',
+  },
+  lineItemTable: {
+    width: '100%',
+    fontSize: '13px',
+    borderCollapse: 'collapse',
+  },
+  lineItemLabel: {
+    color: '#64748b',
+    padding: '4px 0',
+  },
+  lineItemValue: {
+    textAlign: 'right' as const,
+    color: '#1e293b',
+    fontWeight: 500,
+    padding: '4px 0',
+  },
+  lineItemSubtotal: {
+    borderTop: '1px solid #e2e8f0',
+  },
+  decorationInfo: {
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '1px solid #e2e8f0',
+  },
+  decorationTitle: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#475569',
+    marginBottom: '4px',
+  },
+  decorationDetails: {
+    fontSize: '13px',
+    color: '#1e293b',
+  },
+  chargesSection: {
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '1px solid #e2e8f0',
+  },
+  chargesTitle: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#475569',
+    marginBottom: '8px',
+  },
+  totalSection: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '2px solid #1e293b',
+  },
+  totalLabel: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#1e293b',
+  },
+  totalValue: {
+    fontSize: '18px',
+    fontWeight: 700,
+    color: '#1e293b',
+  },
+};

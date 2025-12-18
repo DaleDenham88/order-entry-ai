@@ -1,194 +1,366 @@
-// app/api/process-order/route.ts
-
 import { NextRequest, NextResponse } from 'next/server';
-import { 
-  parseOrderRequest, 
-  generateClarifyingQuestions, 
-  buildLineItem,
-  generateResponseMessage 
-} from '@/lib/ai-assistant';
-import { getProduct, getConfigurationAndPricing, getAvailableCharges, getAvailableLocations } from '@/lib/promostandards';
-import { ConversationState, GenerateLineItemResponse } from '@/types';
+import { ConversationState, AvailableOptions, RequiredFields, PricingConfiguration } from '@/types';
+import { getConfigurationAndPricing, getProductData } from '@/lib/promostandards';
+import { parseUserRequest, parseUserResponse, buildLineItem } from '@/lib/ai-assistant';
 
-export async function POST(request: NextRequest): Promise<NextResponse<GenerateLineItemResponse>> {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { userInput, currentState } = body as {
+    const { userInput, currentState, selectionUpdate } = body as {
       userInput: string;
-      currentState?: ConversationState;
+      currentState: ConversationState | null;
+      selectionUpdate?: { field: string; value: string | number | null };
     };
 
-    // Initialize or update state
-    let state: ConversationState = currentState || {
-      step: 'initial',
-      parsedRequest: { rawQuery: '', confidence: 'low', missingFields: [] },
-      selectedOptions: {},
-      questions: [],
-    };
-
-    // If we have a current state with questions, this is an answer
-    if (currentState && currentState.questions.length > 0 && userInput) {
-      const lastQuestion = state.questions[0];
-      
-      // Store the answer
-      if (lastQuestion.field === 'quantity') {
-        const qty = parseInt(userInput);
-        if (!isNaN(qty)) {
-          state.selectedOptions.quantity = qty;
-          state.parsedRequest.quantity = qty;
-        }
-      } else if (lastQuestion.field === 'color') {
-        state.selectedOptions.color = userInput;
-        state.parsedRequest.color = userInput;
-      } else if (lastQuestion.field === 'decorationMethod') {
-        state.selectedOptions.decorationMethod = userInput;
-        state.parsedRequest.decorationMethod = userInput;
-      } else if (lastQuestion.field === 'decorationLocation') {
-        state.selectedOptions.decorationLocation = userInput;
-        state.parsedRequest.decorationLocation = userInput;
-      } else if (lastQuestion.field === 'decorationColors') {
-        const colors = parseInt(userInput);
-        if (!isNaN(colors)) {
-          state.selectedOptions.decorationColors = colors;
-          state.parsedRequest.decorationColors = colors;
-        }
-      } else if (lastQuestion.field === 'productId') {
-        state.parsedRequest.productId = userInput;
-      } else {
-        // Generic field
-        state.selectedOptions[lastQuestion.field] = userInput;
-      }
-      
-      // Clear the answered question
-      state.questions = state.questions.slice(1);
+    // Handle direct selection updates from UI clicks
+    if (selectionUpdate && currentState) {
+      return handleSelectionUpdate(currentState, selectionUpdate);
     }
 
-    // Step 1: Parse the user input if this is initial or we need product
-    if (state.step === 'initial' || !state.product) {
-      // Only parse if we don't already have parsed data
-      if (!state.parsedRequest.productId) {
-        const parsed = await parseOrderRequest(userInput);
-        state.parsedRequest = { ...state.parsedRequest, ...parsed };
-      }
+    // Initial request - parse and fetch data
+    if (!currentState) {
+      const parsedRequest = await parseUserRequest(userInput);
 
-      // If we don't have a product ID, we need to ask
-      if (!state.parsedRequest.productId) {
-        state.step = 'clarifying_product';
-        state.questions = [{
-          field: 'productId',
-          question: "I need a product ID to look up. What's the product number? (e.g., '5790' for HIT drinkware)",
-          type: 'text',
-          options: undefined,
-        }];
-        
-        return NextResponse.json({ 
-          success: true, 
-          state, 
-          message: "I'd be happy to help build your order! What's the product ID or SKU you're looking for?" 
-        });
-      }
-
-      // Fetch product data
-      const product = await getProduct(state.parsedRequest.productId);
-      if (!product) {
-        state.questions = [{
-          field: 'productId',
-          question: `Couldn't find product "${state.parsedRequest.productId}". Please check the ID and try again.`,
-          type: 'text',
-          options: undefined,
-        }];
-        return NextResponse.json({ 
-          success: true, 
-          state, 
-          message: `I couldn't find product "${state.parsedRequest.productId}" in HIT's catalog. Double-check the product ID?`
-        });
-      }
-
-      state.product = product;
-      state.step = 'product_found';
-
-      // Fetch pricing and configuration
-      const pricing = await getConfigurationAndPricing(product.productId);
-      if (pricing) {
-        // Fetch additional data
-        const [charges, locations] = await Promise.all([
-          getAvailableCharges(product.productId),
-          getAvailableLocations(product.productId),
-        ]);
-        
-        pricing.charges = charges;
-        if (locations.length > 0) {
-          pricing.decorationLocations = locations;
-        }
-        state.pricing = pricing;
-      }
-    }
-
-    // Step 2: Generate clarifying questions if we have product but missing info
-    if (state.product && state.pricing) {
-      const questions = await generateClarifyingQuestions(
-        state.parsedRequest,
-        state.product,
-        state.pricing
-      );
-
-      if (questions.length > 0) {
-        const isFirstTime = state.step === 'product_found';
-        state.step = 'clarifying_options';
-        state.questions = questions;
-
-        // Build a friendly message
-        const productInfo = `Found **${state.product.productName}** (${state.product.productId})`;
-        const questionText = questions.map(q => q.question).join('\n\n');
-
+      // Need productId to proceed
+      if (!parsedRequest.productId) {
         return NextResponse.json({
-          success: true,
-          state,
-          message: isFirstTime
-            ? `${productInfo}\n\nI need a few details to complete your line item:\n\n${questionText}`
-            : questionText
+          success: false,
+          error: 'Please specify a product ID (e.g., "order 500 of product 55900")',
         });
       }
 
-      // Step 3: We have enough info - build the line item
-      state.step = 'calculating_price';
-      const lineItem = await buildLineItem(
-        state.parsedRequest,
-        state.product,
-        state.pricing,
-        state.selectedOptions
-      );
+      // Fetch pricing configuration
+      const pricingData = await getConfigurationAndPricing(parsedRequest.productId);
+      const productData = await getProductData(parsedRequest.productId);
 
-      state.lineItem = lineItem;
-      state.step = 'complete';
-      state.questions = [];
+      // Match color to partId if color is specified
+      if (parsedRequest.color && !parsedRequest.partId) {
+        const matchingPart = pricingData.parts.find(p =>
+          p.partDescription.toLowerCase().includes(parsedRequest.color!.toLowerCase())
+        );
+        if (matchingPart) {
+          parsedRequest.partId = matchingPart.partId;
+        }
+      }
 
-      return NextResponse.json({ 
-        success: true, 
-        state, 
-        message: `Here's your complete line item for **${state.product.productName}**:`
+      // Match decoration method if specified
+      let matchedDecorationMethod: string | undefined;
+      let matchedDecorationLocation: string | undefined;
+
+      if (parsedRequest.decorationMethod) {
+        for (const location of pricingData.locations) {
+          const decoration = location.decorations.find(d =>
+            d.decorationName.toLowerCase().includes(parsedRequest.decorationMethod!.toLowerCase())
+          );
+          if (decoration) {
+            matchedDecorationMethod = decoration.decorationName;
+            if (!parsedRequest.decorationLocation) {
+              matchedDecorationLocation = location.locationName;
+            }
+            break;
+          }
+        }
+      }
+
+      if (parsedRequest.decorationLocation) {
+        const location = pricingData.locations.find(l =>
+          l.locationName.toLowerCase().includes(parsedRequest.decorationLocation!.toLowerCase())
+        );
+        if (location) {
+          matchedDecorationLocation = location.locationName;
+        }
+      }
+
+      const newState: ConversationState = {
+        parsedRequest,
+        selectedOptions: {
+          ...parsedRequest,
+          decorationMethod: matchedDecorationMethod || parsedRequest.decorationMethod,
+          decorationLocation: matchedDecorationLocation || parsedRequest.decorationLocation,
+        },
+        questions: [],
+        pricingData,
+      };
+
+      // Build available options for the UI
+      const availableOptions = buildAvailableOptions(pricingData, newState.selectedOptions);
+      const requiredFields = getRequiredFields(newState.selectedOptions);
+
+      // Debug logging
+      console.log('Pricing data parts:', pricingData.parts.length);
+      console.log('Pricing data locations:', pricingData.locations.length);
+      console.log('Available options:', JSON.stringify(availableOptions, null, 2));
+
+      // Check if we can build a line item
+      if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation) {
+        const lineItem = buildLineItem(newState, productData.productName);
+        if (lineItem) {
+          newState.lineItem = lineItem;
+          return NextResponse.json({
+            success: true,
+            state: newState,
+            message: `Great! Here's your order summary for ${productData.productName}:`,
+            availableOptions,
+            requiredFields,
+            productInfo: {
+              productId: pricingData.productId,
+              productName: productData.productName,
+              quantity: parsedRequest.quantity || 0,
+            },
+          });
+        }
+      }
+
+      // Return with options for selection
+      const missingFields = getMissingFieldsList(requiredFields);
+      return NextResponse.json({
+        success: true,
+        state: newState,
+        message: `Found product ${productData.productName}! Please select the following to complete your order: ${missingFields.join(', ')}.`,
+        availableOptions,
+        requiredFields,
+        productInfo: {
+          productId: pricingData.productId,
+          productName: productData.productName,
+          quantity: parsedRequest.quantity || 0,
+        },
       });
     }
 
-    // Fallback
-    return NextResponse.json({ 
-      success: true, 
-      state, 
-      message: 'Something went wrong. Please try starting over with a product ID.'
+    // Follow-up response - parse answer and update state
+    const extracted = await parseUserResponse(userInput, currentState);
+
+    // Try to match extracted values to actual options
+    if (currentState.pricingData) {
+      // Match color/part
+      if (extracted.color || extracted.partId) {
+        const colorValue = extracted.color || extracted.partId;
+        const matchingPart = currentState.pricingData.parts.find(p =>
+          p.partId.toLowerCase() === String(colorValue).toLowerCase() ||
+          p.partDescription.toLowerCase().includes(String(colorValue).toLowerCase())
+        );
+        if (matchingPart) {
+          extracted.partId = matchingPart.partId;
+        }
+      }
+
+      // Match decoration method
+      if (extracted.decorationMethod) {
+        for (const location of currentState.pricingData.locations) {
+          const decoration = location.decorations.find(d =>
+            d.decorationName.toLowerCase().includes(String(extracted.decorationMethod).toLowerCase())
+          );
+          if (decoration) {
+            extracted.decorationMethod = decoration.decorationName;
+            // If location not set, use this location
+            if (!currentState.selectedOptions.decorationLocation && !extracted.decorationLocation) {
+              extracted.decorationLocation = location.locationName;
+            }
+            break;
+          }
+        }
+      }
+
+      // Match decoration location
+      if (extracted.decorationLocation) {
+        const location = currentState.pricingData.locations.find(l =>
+          l.locationName.toLowerCase().includes(String(extracted.decorationLocation).toLowerCase())
+        );
+        if (location) {
+          extracted.decorationLocation = location.locationName;
+        }
+      }
+    }
+
+    // Merge extracted values into selectedOptions
+    for (const [key, value] of Object.entries(extracted)) {
+      if (value !== null && value !== undefined) {
+        currentState.selectedOptions[key] = value;
+      }
+    }
+
+    // Build updated options and required fields
+    const availableOptions = currentState.pricingData
+      ? buildAvailableOptions(currentState.pricingData, currentState.selectedOptions)
+      : undefined;
+    const requiredFields = getRequiredFields(currentState.selectedOptions);
+
+    // If all required fields are filled, build line item
+    if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation && currentState.pricingData) {
+      const productData = await getProductData(currentState.pricingData.productId);
+      const lineItem = buildLineItem(currentState, productData.productName);
+
+      if (lineItem) {
+        currentState.lineItem = lineItem;
+        return NextResponse.json({
+          success: true,
+          state: currentState,
+          message: `Perfect! Here's your complete order:`,
+          availableOptions,
+          requiredFields,
+          productInfo: {
+            productId: currentState.pricingData.productId,
+            productName: productData.productName,
+            quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
+          },
+        });
+      }
+    }
+
+    // Still need selections
+    const missingFields = getMissingFieldsList(requiredFields);
+    const productData = currentState.pricingData
+      ? await getProductData(currentState.pricingData.productId)
+      : { productName: 'Unknown Product' };
+
+    return NextResponse.json({
+      success: true,
+      state: currentState,
+      message: missingFields.length > 0
+        ? `Please select: ${missingFields.join(', ')}`
+        : 'Processing your selections...',
+      availableOptions,
+      requiredFields,
+      productInfo: currentState.pricingData ? {
+        productId: currentState.pricingData.productId,
+        productName: productData.productName,
+        quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
+      } : undefined,
     });
 
   } catch (error) {
-    console.error('Process order error:', error);
+    console.error('Order processing error:', error);
     return NextResponse.json({
       success: false,
-      state: {
-        step: 'initial',
-        parsedRequest: { rawQuery: '', confidence: 'low', missingFields: [] },
-        selectedOptions: {},
-        questions: [],
-      },
-      message: 'An error occurred. Please try again.',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
     });
   }
+}
+
+async function handleSelectionUpdate(
+  currentState: ConversationState,
+  selectionUpdate: { field: string; value: string | number | null }
+) {
+  const { field, value } = selectionUpdate;
+
+  // Update the selected option
+  if (value === null) {
+    delete currentState.selectedOptions[field];
+  } else {
+    currentState.selectedOptions[field] = value;
+  }
+
+  // If selecting a decoration method, auto-select the location if only one is available
+  if (field === 'decorationMethod' && value && currentState.pricingData) {
+    const locationsWithMethod = currentState.pricingData.locations.filter(l =>
+      l.decorations.some(d => d.decorationName === value)
+    );
+    if (locationsWithMethod.length === 1 && !currentState.selectedOptions.decorationLocation) {
+      currentState.selectedOptions.decorationLocation = locationsWithMethod[0].locationName;
+    }
+  }
+
+  // Build updated options and required fields
+  const availableOptions = currentState.pricingData
+    ? buildAvailableOptions(currentState.pricingData, currentState.selectedOptions)
+    : undefined;
+  const requiredFields = getRequiredFields(currentState.selectedOptions);
+
+  // If all required fields are filled, build line item
+  if (!requiredFields.color && !requiredFields.decorationMethod && !requiredFields.decorationLocation && currentState.pricingData) {
+    const productData = await getProductData(currentState.pricingData.productId);
+    const lineItem = buildLineItem(currentState, productData.productName);
+
+    if (lineItem) {
+      currentState.lineItem = lineItem;
+      return NextResponse.json({
+        success: true,
+        state: currentState,
+        message: `Order complete!`,
+        availableOptions,
+        requiredFields,
+        productInfo: {
+          productId: currentState.pricingData.productId,
+          productName: productData.productName,
+          quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
+        },
+      });
+    }
+  }
+
+  // Still need more selections
+  const missingFields = getMissingFieldsList(requiredFields);
+  const productData = currentState.pricingData
+    ? await getProductData(currentState.pricingData.productId)
+    : { productName: 'Unknown Product' };
+
+  return NextResponse.json({
+    success: true,
+    state: currentState,
+    message: missingFields.length > 0
+      ? `Selected ${field}. Still need: ${missingFields.join(', ')}`
+      : 'All selections made!',
+    availableOptions,
+    requiredFields,
+    productInfo: currentState.pricingData ? {
+      productId: currentState.pricingData.productId,
+      productName: productData.productName,
+      quantity: currentState.selectedOptions.quantity || currentState.parsedRequest.quantity || 0,
+    } : undefined,
+  });
+}
+
+function buildAvailableOptions(pricingData: PricingConfiguration, selectedOptions: Record<string, any>): AvailableOptions {
+  // Get unique decoration methods across all locations
+  const decorationMethodsMap = new Map<string, string>();
+  let maxColors = 1;
+
+  for (const location of pricingData.locations) {
+    for (const decoration of location.decorations) {
+      decorationMethodsMap.set(decoration.decorationName, decoration.decorationId);
+      if (decoration.decorationUnitsMax > maxColors) {
+        maxColors = decoration.decorationUnitsMax;
+      }
+    }
+  }
+
+  return {
+    colors: pricingData.parts.map(p => ({
+      partId: p.partId,
+      name: p.partDescription,
+      selected: selectedOptions.partId === p.partId,
+    })),
+    decorationMethods: Array.from(decorationMethodsMap.entries()).map(([name, id]) => ({
+      id,
+      name,
+      selected: selectedOptions.decorationMethod === name,
+    })),
+    decorationLocations: pricingData.locations.map(l => ({
+      id: l.locationId,
+      name: l.locationName,
+      selected: selectedOptions.decorationLocation === l.locationName,
+    })),
+    decorationColors: {
+      min: 1,
+      max: maxColors,
+      selected: selectedOptions.decorationColors || null,
+    },
+  };
+}
+
+function getRequiredFields(selectedOptions: Record<string, any>): RequiredFields {
+  return {
+    color: !selectedOptions.partId,
+    decorationMethod: !selectedOptions.decorationMethod,
+    decorationLocation: !selectedOptions.decorationLocation,
+    decorationColors: false, // Optional, defaults to 1
+  };
+}
+
+function getMissingFieldsList(requiredFields: RequiredFields): string[] {
+  const missing: string[] = [];
+  if (requiredFields.color) missing.push('color');
+  if (requiredFields.decorationMethod) missing.push('decoration method');
+  if (requiredFields.decorationLocation) missing.push('decoration location');
+  return missing;
 }

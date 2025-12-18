@@ -846,10 +846,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginTop: '12px',
   },
   lineItem: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'white',
     borderRadius: '8px',
-    padding: '16px',
+    overflow: 'hidden',
     border: '1px solid #e2e8f0',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
   },
   lineItemHeader: {
     display: 'flex',

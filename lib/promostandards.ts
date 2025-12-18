@@ -59,17 +59,23 @@ export async function getFobPoints(productId: string): Promise<string | null> {
   addDebugLog('GetFobPoints Request', `URL: ${HIT_ENDPOINTS.ppc}\n\n${soapEnvelope}`);
 
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "text/xml; charset=utf-8",
+      "SOAPAction": "getFobPoints",
+      "User-Agent": "PromoStandards-Client/1.0",
+      "Accept": "*/*",
+      "Cache-Control": "no-cache",
+    };
+
+    addDebugLog('GetFobPoints Headers', JSON.stringify(headers, null, 2));
+
     const response = await fetch(HIT_ENDPOINTS.ppc, {
       method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": "getFobPoints",
-      },
+      headers,
       body: soapEnvelope,
-      redirect: "follow",
     });
 
-    addDebugLog('GetFobPoints Fetch Status', undefined, `Status: ${response.status} ${response.statusText}\nFinal URL: ${response.url}`);
+    addDebugLog('GetFobPoints Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
 
     const xmlText = await response.text();
 
@@ -185,12 +191,14 @@ export async function getConfigurationAndPricing(
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": "getConfigurationAndPricing",
+        "User-Agent": "PromoStandards-Client/1.0",
+        "Accept": "*/*",
+        "Cache-Control": "no-cache",
       },
       body: soapEnvelope,
-      redirect: "follow",
     });
 
-    addDebugLog('GetConfigurationAndPricing Fetch Status', undefined, `Status: ${response.status} ${response.statusText}\nFinal URL: ${response.url}`);
+    addDebugLog('GetConfigurationAndPricing Fetch Status', undefined, `Status: ${response.status} ${response.statusText}`);
 
     const xmlText = await response.text();
     const result = parseConfigurationResponse(xmlText, productId);

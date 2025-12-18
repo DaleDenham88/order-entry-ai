@@ -20,6 +20,35 @@ export async function POST(request: NextRequest) {
       return handleSelectionUpdate(currentState, selectionUpdate);
     }
 
+    // Check for reset/new order commands
+    const resetPatterns = [
+      /^(start\s+)?(new|another)\s+order/i,
+      /^start\s+over/i,
+      /^reset/i,
+      /^clear/i,
+    ];
+    if (resetPatterns.some(p => p.test(userInput.trim()))) {
+      return NextResponse.json({
+        success: true,
+        resetOrder: true,
+        message: 'Starting a new order! What would you like to order?',
+        debugLogs: getDebugLogs(),
+      });
+    }
+
+    // Check for quantity-only updates when we have an existing order
+    if (currentState && userInput.trim()) {
+      const qtyMatch = userInput.match(/^(\d+)$/) ||
+                       userInput.match(/(?:quantity|qty)[:\s]+(\d+)/i) ||
+                       userInput.match(/(\d+)\s+(?:units?|pieces?|items?)/i);
+      if (qtyMatch) {
+        const qty = parseInt(qtyMatch[1], 10);
+        if (qty > 0) {
+          return handleSelectionUpdate(currentState, { field: 'quantity', value: qty });
+        }
+      }
+    }
+
     // Initial request - parse and fetch data
     if (!currentState) {
       const parsedRequest = await parseUserRequest(userInput);
@@ -332,27 +361,61 @@ async function handleSelectionUpdate(
 }
 
 function buildAvailableOptions(pricingData: PricingConfiguration, selectedOptions: Record<string, any>): AvailableOptions {
+  // Filter parts to only show main product colors (partGroup 1 or no partGroup)
+  // partGroup 2+ are typically accessories like lids
+  const mainParts = pricingData.parts.filter(p =>
+    p.partGroup === undefined || p.partGroup === 1
+  );
+
   // Get unique decoration methods across all locations
-  const decorationMethodsMap = new Map<string, string>();
-  let maxColors = 1;
+  // Filter out charge-like names (e.g., "CB DRINKWARE SMALL", "CB DRINKWARE LARGE")
+  const decorationMethodsMap = new Map<string, { id: string; maxColors: number }>();
+
+  // Common patterns that indicate a charge name rather than a decoration method
+  const chargePatterns = [
+    /\b(small|large|medium|xl|xxl)\s*$/i,  // Size suffixes
+    /^cb\s/i,  // "CB " prefix (charge-based)
+    /drinkware/i,  // Drinkware charges
+  ];
 
   for (const location of pricingData.locations) {
     for (const decoration of location.decorations) {
-      decorationMethodsMap.set(decoration.decorationName, decoration.decorationId);
-      if (decoration.decorationUnitsMax > maxColors) {
-        maxColors = decoration.decorationUnitsMax;
+      const name = decoration.decorationName;
+
+      // Skip if it looks like a charge name rather than a decoration method
+      const isChargeName = chargePatterns.some(pattern => pattern.test(name));
+      if (isChargeName) {
+        console.log('Filtered out charge-like decoration method:', name);
+        continue;
+      }
+
+      // Track the max colors for each method
+      const existing = decorationMethodsMap.get(name);
+      if (!existing || decoration.decorationUnitsMax > existing.maxColors) {
+        decorationMethodsMap.set(name, {
+          id: decoration.decorationId,
+          maxColors: decoration.decorationUnitsMax,
+        });
       }
     }
   }
 
+  // Calculate overall max colors from valid decoration methods
+  let maxColors = 1;
+  for (const method of decorationMethodsMap.values()) {
+    if (method.maxColors > maxColors) {
+      maxColors = method.maxColors;
+    }
+  }
+
   return {
-    colors: pricingData.parts.map(p => ({
+    colors: mainParts.map(p => ({
       partId: p.partId,
       name: p.partDescription,
       selected: selectedOptions.partId === p.partId,
     })),
-    decorationMethods: Array.from(decorationMethodsMap.entries()).map(([name, id]) => ({
-      id,
+    decorationMethods: Array.from(decorationMethodsMap.entries()).map(([name, data]) => ({
+      id: data.id,
       name,
       selected: selectedOptions.decorationMethod === name,
     })),
@@ -362,9 +425,9 @@ function buildAvailableOptions(pricingData: PricingConfiguration, selectedOption
       selected: selectedOptions.decorationLocation === l.locationName,
     })),
     decorationColors: {
-      min: 1,
+      min: 0,  // Allow 0 for laser engraving
       max: maxColors,
-      selected: selectedOptions.decorationColors || null,
+      selected: selectedOptions.decorationColors ?? null,
     },
   };
 }
@@ -375,7 +438,8 @@ function getRequiredFields(selectedOptions: Record<string, any>): RequiredFields
     color: !selectedOptions.partId,
     decorationMethod: !selectedOptions.decorationMethod,
     decorationLocation: !selectedOptions.decorationLocation,
-    decorationColors: !selectedOptions.decorationColors,
+    // 0 is a valid value for decorationColors (laser engraving)
+    decorationColors: selectedOptions.decorationColors === undefined || selectedOptions.decorationColors === null,
   };
 }
 

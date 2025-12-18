@@ -75,18 +75,34 @@ export default function OrderEntryPage() {
       }
 
       if (data.success) {
-        setConversationState(data.state);
-        setAvailableOptions(data.availableOptions || null);
-        setRequiredFields(data.requiredFields || null);
-        setProductInfo(data.productInfo || null);
-        setMessages(prev => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: data.message,
-            lineItem: data.state.lineItem,
-          },
-        ]);
+        // Handle reset/new order command
+        if (data.resetOrder) {
+          setConversationState(null);
+          setAvailableOptions(null);
+          setRequiredFields(null);
+          setProductInfo(null);
+          setDebugLogs([]);
+          setMessages(prev => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: data.message,
+            },
+          ]);
+        } else {
+          setConversationState(data.state);
+          setAvailableOptions(data.availableOptions || null);
+          setRequiredFields(data.requiredFields || null);
+          setProductInfo(data.productInfo || null);
+          setMessages(prev => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: data.message,
+              lineItem: data.state?.lineItem,
+            },
+          ]);
+        }
       } else {
         setMessages(prev => [
           ...prev,
@@ -372,16 +388,17 @@ export default function OrderEntryPage() {
               <div style={styles.optionSection}>
                 <div style={styles.optionSectionHeader}>
                   <span style={styles.optionSectionTitle}>Imprint Colors</span>
-                  {requiredFields?.decorationColors && !availableOptions.decorationColors.selected ? (
+                  {requiredFields?.decorationColors && availableOptions.decorationColors.selected === null ? (
                     <span style={styles.requiredBadge}>Required</span>
-                  ) : availableOptions.decorationColors.selected ? (
+                  ) : availableOptions.decorationColors.selected !== null ? (
                     <span style={styles.selectedBadge}>✓</span>
                   ) : (
                     <span style={styles.optionalBadge}>Optional</span>
                   )}
                 </div>
                 <div style={styles.colorCountSelector}>
-                  {Array.from({ length: availableOptions.decorationColors.max }, (_, i) => i + 1).map(num => (
+                  {/* Start from 0 (for laser engraving) up to max */}
+                  {Array.from({ length: availableOptions.decorationColors.max + 1 }, (_, i) => i).map(num => (
                     <button
                       key={num}
                       onClick={() => handleOptionSelect('decorationColors', num)}
@@ -392,7 +409,7 @@ export default function OrderEntryPage() {
                         ...(loading ? styles.optionButtonDisabled : {}),
                       }}
                     >
-                      {num}
+                      {num === 0 ? '0' : num}
                     </button>
                   ))}
                 </div>

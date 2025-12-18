@@ -8,6 +8,7 @@ export interface PartPrice {
 export interface Part {
   partId: string;
   partDescription: string;
+  partGroup?: number;
   priceBreaks: PartPrice[];
 }
 

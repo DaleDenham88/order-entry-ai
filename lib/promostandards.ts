@@ -250,6 +250,8 @@ function parseConfigurationResponse(
   for (const partBlock of partBlocks) {
     const partId = extractValue(partBlock, "partId");
     const partDescription = extractValue(partBlock, "partDescription") || "";
+    const partGroupStr = extractValue(partBlock, "partGroup");
+    const partGroup = partGroupStr ? parseInt(partGroupStr) : undefined;
 
     if (partId) {
       const priceBreaks: PartPrice[] = [];
@@ -272,6 +274,7 @@ function parseConfigurationResponse(
       parts.push({
         partId,
         partDescription,
+        partGroup,
         priceBreaks: priceBreaks.sort((a, b) => a.minQuantity - b.minQuantity),
       });
     }
